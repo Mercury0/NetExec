@@ -165,6 +165,7 @@ class smb(connection):
         self.no_ntlm = False
         self.protocol = "SMB"
         self.is_guest = None
+        self.admin_privs = False
 
         connection.__init__(self, args, db, host)
 
@@ -560,7 +561,6 @@ class smb(connection):
             self.conn.listPath('C$', '\\')
             self.logger.debug(f"User is admin on {self.host}!")
             self.admin_privs = True
-            return True
         except SessionError as e:
             self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
             self.admin_privs = False
