@@ -165,9 +165,92 @@ class smb(connection):
         self.no_ntlm = False
         self.protocol = "SMB"
         self.is_guest = None
+        self.admin_privs = False
 
         connection.__init__(self, args, db, host)
 
+    def check_if_admin(self):
+        self.logger.debug(f"Checking if user is admin on {self.host}")
+        try:
+            # Establish SMB connection
+            self.conn = SMBConnection(self.host, self.host)
+            self.conn.login(self.username, self.password, self.domain, self.lmhash, self.nthash)
+            # Attempt to list the contents of the C$ share
+            self.conn.listPath('C$', '\\')
+            self.logger.debug(f"User is admin on {self.host}!")
+            self.admin_privs = True
+        except SessionError as e:
+            self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
+            self.admin_privs = False
+        except Exception as e:
+            self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
+            self.admin_privs = False
+        finally:
+            if self.conn:
+                self.conn.logoff()
+                
+    def hash_login(self, domain, username, ntlm_hash):
+        lmhash = ""
+        nthash = ""
+        try:
+            self.domain = domain
+            self.username = username
+            # This checks to see if we didn't provide the LM Hash
+            if ntlm_hash.find(":") != -1:
+                lmhash, nthash = ntlm_hash.split(":")
+                self.hash = nthash
+            else:
+                nthash = ntlm_hash
+                self.hash = ntlm_hash
+            if lmhash:
+                self.lmhash = lmhash
+            if nthash:
+                self.nthash = nthash
+
+            self.conn.login(self.username, "", domain, lmhash, nthash)
+            self.logger.debug(f"Logged in with hash to SMB with {domain}/{self.username}")
+            self.is_guest = bool(self.conn.isGuestSession())
+            self.logger.debug(f"{self.is_guest=}")
+            if "Unix" not in self.server_os:
+                self.check_if_admin()
+            user_id = self.db.add_credential("hash", domain, self.username, self.hash)
+            host_id = self.db.get_hosts(self.host)[0].id
+
+            self.db.add_loggedin_relation(user_id, host_id)
+
+            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_pwned()}"
+            self.logger.success(out)
+
+            if not self.args.local_auth and self.username != "":
+                add_user_bh(self.username, self.domain, self.logger, self.config)
+            if self.admin_privs:
+                self.db.add_admin_user("hash", domain, self.username, nthash, self.host, user_id=user_id)
+                add_user_bh(f"{self.hostname}$", domain, self.logger, self.config)
+
+            # check https://github.com/byt3bl33d3r/CrackMapExec/issues/321
+            if self.args.continue_on_success and self.signing:
+                with contextlib.suppress(Exception):
+                    self.conn.logoff()
+                self.create_conn_obj()
+            return True
+        except SessionError as e:
+            error, desc = e.getErrorString()
+            self.logger.fail(
+                f"{domain}\\{self.username}:{process_secret(self.hash)} {error} {f'({desc})' if self.args.verbose else ''}",
+                color="magenta" if error in smb_error_status else "red",
+            )
+
+            if error not in smb_error_status:
+                self.inc_failed_login(self.username)
+                return False
+        except (ConnectionResetError, NetBIOSTimeout, NetBIOSError) as e:
+            self.logger.fail(f"Connection Error: {e}")
+            return False
+        except BrokenPipeError:
+            self.logger.fail("Broken Pipe Error while attempting to login")
+            return False
+
+    
     def proto_logger(self):
         self.logger = NXCAdapter(
             extra={
@@ -443,69 +526,6 @@ class smb(connection):
             self.logger.fail("Broken Pipe Error while attempting to login")
             return False
 
-    def hash_login(self, domain, username, ntlm_hash):
-        # Re-connect since we logged off
-        self.create_conn_obj()
-        lmhash = ""
-        nthash = ""
-        try:
-            self.domain = domain
-            self.username = username
-            # This checks to see if we didn't provide the LM Hash
-            if ntlm_hash.find(":") != -1:
-                lmhash, nthash = ntlm_hash.split(":")
-                self.hash = nthash
-            else:
-                nthash = ntlm_hash
-                self.hash = ntlm_hash
-            if lmhash:
-                self.lmhash = lmhash
-            if nthash:
-                self.nthash = nthash
-
-            self.conn.login(self.username, "", domain, lmhash, nthash)
-            self.logger.debug(f"Logged in with hash to SMB with {domain}/{self.username}")
-            self.is_guest = bool(self.conn.isGuestSession())
-            self.logger.debug(f"{self.is_guest=}")
-            if "Unix" not in self.server_os:
-                self.check_if_admin()
-            user_id = self.db.add_credential("hash", domain, self.username, self.hash)
-            host_id = self.db.get_hosts(self.host)[0].id
-
-            self.db.add_loggedin_relation(user_id, host_id)
-
-            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_pwned()}"
-            self.logger.success(out)
-
-            if not self.args.local_auth and self.username != "":
-                add_user_bh(self.username, self.domain, self.logger, self.config)
-            if self.admin_privs:
-                self.db.add_admin_user("hash", domain, self.username, nthash, self.host, user_id=user_id)
-                add_user_bh(f"{self.hostname}$", domain, self.logger, self.config)
-
-            # check https://github.com/byt3bl33d3r/CrackMapExec/issues/321
-            if self.args.continue_on_success and self.signing:
-                with contextlib.suppress(Exception):
-                    self.conn.logoff()
-                self.create_conn_obj()
-            return True
-        except SessionError as e:
-            error, desc = e.getErrorString()
-            self.logger.fail(
-                f"{domain}\\{self.username}:{process_secret(self.hash)} {error} {f'({desc})' if self.args.verbose else ''}",
-                color="magenta" if error in smb_error_status else "red",
-            )
-
-            if error not in smb_error_status:
-                self.inc_failed_login(self.username)
-                return False
-        except (ConnectionResetError, NetBIOSTimeout, NetBIOSError) as e:
-            self.logger.fail(f"Connection Error: {e}")
-            return False
-        except BrokenPipeError:
-            self.logger.fail("Broken Pipe Error while attempting to login")
-            return False
-
     def create_smbv1_conn(self):
         try:
             self.conn = SMBConnection(
@@ -552,20 +572,6 @@ class smb(connection):
 
     def create_conn_obj(self):
         return bool(self.create_smbv1_conn() or self.create_smbv3_conn())
-
-    def check_if_admin(self):
-        self.logger.debug(f"Checking if user is admin on {self.host}")
-        try:
-            # Attempt to list the contents of the C$ share
-            self.conn.listPath('C$', '\\')
-            self.logger.debug(f"User is admin on {self.host}!")
-            self.admin_privs = True
-        except SessionError as e:
-            self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
-        except Exception as e:
-            self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
