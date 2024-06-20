@@ -560,6 +560,7 @@ class smb(connection):
             self.conn.listPath('C$', '\\')
             self.logger.debug(f"User is admin on {self.host}!")
             self.admin_privs = True
+            return True
         except SessionError as e:
             self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
             self.admin_privs = False
