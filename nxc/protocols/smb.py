@@ -557,14 +557,25 @@ class smb(connection):
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
         try:
+            # Attempt to list the contents of the C$ share
             self.logger.debug("Attempting to list the contents of the C$ share")
-            for file in self.conn.listPath('C$', '\\'):
-                self.logger.debug(f"Found file: {file.get_longname()}")
+            self.conn.listPath('C$', '\\')
             self.logger.debug(f"Successfully accessed C$ on {self.host}")
             self.admin_privs = True
         except SessionError as e:
             self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
+            if e.getErrorCode() == 0xc000000d:  # STATUS_INVALID_PARAMETER
+                self.logger.debug("Attempting to correct the parameters")
+                try:
+                    # Attempting with a different path format
+                    self.conn.listPath('C$', '/')
+                    self.logger.debug(f"Successfully accessed C$ on {self.host} with '/'")
+                    self.admin_privs = True
+                except SessionError as e:
+                    self.logger.debug(f"Session error when checking admin status with '/' on {self.host}: {e}")
+                    self.admin_privs = False
+            else:
+                self.admin_privs = False
         except Exception as e:
             self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
             self.admin_privs = False
