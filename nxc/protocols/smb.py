@@ -553,7 +553,7 @@ class smb(connection):
     def create_conn_obj(self):
         return bool(self.create_smbv1_conn() or self.create_smbv3_conn())
 
-     def check_if_admin(self):
+    def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
         try:
             # Attempt to list the contents of the C$ share
