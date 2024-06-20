@@ -563,10 +563,10 @@ class smb(connection):
             self.admin_privs = True
         except SessionError as e:
             self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
+            self.admin_privs = True
         except Exception as e:
             self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
+            self.admin_privs = True
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
