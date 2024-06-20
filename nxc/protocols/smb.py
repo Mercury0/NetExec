@@ -557,19 +557,18 @@ class smb(connection):
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
         try:
-            # Attempt to read a well-known file in the C$\Windows\System32 directory
-            self.logger.debug("Attempting to read C$\\Windows\\System32\\cmd.exe")
-            file_handle = self.conn.openFile('C$', '\\Windows\\System32\\cmd.exe')
-            self.conn.closeFile(file_handle['FileID'])
-            self.logger.debug(f"Successfully accessed C$\\Windows\\System32\\cmd.exe on {self.host}")
+            # Attempt to list the contents of the C$ share
+            self.logger.debug("Attempting to list the contents of the C$ share")
+            self.conn.listPath('C$', '*')
+            self.logger.debug(f"Successfully accessed C$ on {self.host}")
             self.admin_privs = True
         except SessionError as e:
-            self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
+            error = get_error_string(e)
+            self.logger.debug(f"Session error when checking admin status on {self.host}: {error}")
             self.admin_privs = False
         except Exception as e:
             self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
             self.admin_privs = False
-
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
