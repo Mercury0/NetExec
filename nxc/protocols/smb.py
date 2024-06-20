@@ -339,7 +339,7 @@ class smb(connection):
             if self.args.delegate:
                 used_ccache = f" through S4U with {username}"
 
-            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_pwned()}"
+            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "" and not self.args.delegate:
