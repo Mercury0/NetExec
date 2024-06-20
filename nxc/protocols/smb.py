@@ -405,7 +405,7 @@ class smb(connection):
 
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
@@ -475,7 +475,7 @@ class smb(connection):
 
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
