@@ -555,23 +555,17 @@ class smb(connection):
 
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
-        rpctransport = SMBTransport(self.conn.getRemoteHost(), 445, r"\svcctl", smb_connection=self.conn)
-        dce = rpctransport.get_dce_rpc()
         try:
-            dce.connect()
-        except Exception:
-            pass
-        else:
-            with contextlib.suppress(Exception):
-                dce.bind(scmr.MSRPC_UUID_SCMR)
-            try:
-                # 0xF003F - SC_MANAGER_ALL_ACCESS
-                # http://msdn.microsoft.com/en-us/library/windows/desktop/ms685981(v=vs.85).aspx
-                scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0xF003F)
-                self.logger.debug(f"User is admin on {self.host}!")
-                self.admin_privs = True
-            except scmr.DCERPCException:
-                self.admin_privs = False
+            # Attempt to list the contents of the C$ share
+            self.conn.listPath('C$', '\\')
+            self.logger.debug(f"User is admin on {self.host}!")
+            self.admin_privs = True
+        except SessionError as e:
+            self.logger.debug(f"Session error when checking admin status on {self.host}: {e}")
+            self.admin_privs = False
+        except Exception as e:
+            self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
+            self.admin_privs = False
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
