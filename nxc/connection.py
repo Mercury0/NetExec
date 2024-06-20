@@ -566,6 +566,9 @@ class connection:
     def mark_pwned(self):
         return highlight(f"({pwned_label})" if self.admin_privs else "")
 
+    def mark_stealth(self):
+        return highlight(f"({stealth_label})" if self.admin_privs else "")
+
     def load_modules(self):
         self.logger.info(f"Loading modules for target: {self.host}")
         loader = ModuleLoader(self.args, self.db, self.logger)
