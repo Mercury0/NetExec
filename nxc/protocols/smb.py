@@ -589,7 +589,6 @@ class smb(connection):
     def check_if_admin(self):
         self.logger.debug(f"Checking if user is admin on {self.host}")
         try:
-<<<<<<< HEAD
             # Attempt to list the contents of the C$ share
             self.logger.debug("Attempting to list the contents of the C$ share")
             self.conn.listPath('C$', '*')
