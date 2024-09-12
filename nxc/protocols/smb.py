@@ -568,7 +568,7 @@ class smb(connection):
         return True
 
     def create_conn_obj(self, no_smbv1=False):
-         """
+        """
         Tries to create a connection object to the target host.
         On first try, it will try to create a SMBv1 connection.
         On further tries, it will remember which SMB version is supported and create a connection object accordingly.
