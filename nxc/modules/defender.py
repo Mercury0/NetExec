@@ -153,8 +153,11 @@ class Defender_SMB:
                 self.logger.debug(f"Failed to open key {full_key_path}, Error: {str(e)}")
                 try:
                     ans = rrp.hBaseRegCreateKey(remoteOps._RemoteOperations__rrp, regHandle, full_key_path)
-                    keyHandle = ans["phKey"]
-                    self.logger.debug(f"Created registry key {full_key_path} via SMB")
+                    if "phKey" in ans:
+                        keyHandle = ans["phKey"]
+                        self.logger.debug(f"Created registry key {full_key_path} via SMB")
+                    else:
+                        raise Exception(f"Failed to retrieve key handle for {full_key_path}")
                 except Exception as e:
                     self.logger.error(f"Error creating registry key {full_key_path}: {str(e)}")
                     success = False
