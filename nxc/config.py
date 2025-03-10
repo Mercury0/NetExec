@@ -29,13 +29,17 @@ for section in nxc_default_config.sections():
 # THESE OPTIONS HAVE TO EXIST IN THE DEFAULT CONFIG FILE
 nxc_workspace = nxc_config.get("nxc", "workspace", fallback="default")
 pwned_label = nxc_config.get("nxc", "pwn3d_label", fallback="Pwn3d!")
-stealth_label = nxc_config.get("nxc", "stealth_label", fallback="C$ Access!")
 audit_mode = nxc_config.get("nxc", "audit_mode", fallback=False)
 reveal_chars_of_pwd = int(nxc_config.get("nxc", "reveal_chars_of_pwd", fallback=0))
 config_log = nxc_config.getboolean("nxc", "log_mode", fallback=False)
 ignore_opsec = nxc_config.getboolean("nxc", "ignore_opsec", fallback=False)
 host_info_colors = literal_eval(nxc_config.get("nxc", "host_info_colors", fallback=["green", "red", "yellow", "cyan"]))
 
+# Read stealth_label from user config first, then default config
+if nxc_config.has_option("nxc", "stealth_label"):
+    stealth_label = nxc_config.get("nxc", "stealth_label").strip("'\"")
+else:
+    stealth_label = nxc_default_config.get("nxc", "stealth_label", fallback="C$ Access!").strip("'\"")
 
 if len(host_info_colors) != 4:
     nxc_logger.error("Config option host_info_colors must have 4 values! Using default values.")
