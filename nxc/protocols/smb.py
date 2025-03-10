@@ -637,38 +637,32 @@ class smb(connection):
             return self.create_smbv1_conn()
 
     def check_if_admin(self):
-        self.logger.debug(f"Checking if user is admin on {self.host}")
         try:
-            # Attempt to list the contents of the C$ share
-            self.logger.debug("Attempting to list the contents of the C$ share")
-            self.conn.listPath('C$', '*')
-            self.logger.debug(f"Successfully accessed C$ on {self.host}")
-            self.admin_privs = True
-        except SessionError as e:
-            error = get_error_string(e)
-            self.logger.debug(f"Session error when checking admin status on {self.host}: {error}")
-            self.admin_privs = False
-        except Exception as e:
-            self.logger.debug(f"Error when checking admin status on {self.host}: {e}")
-            self.admin_privs = False
-            dce.connect()
-        except Exception:
-            self.admin_privs = False
-        else:
-            with contextlib.suppress(Exception):
-                dce.bind(scmr.MSRPC_UUID_SCMR)
+            if self.password is None and not self.nthash:
+                return
+
+            # Check if we can list the contents of C$
             try:
-                # 0xF003F - SC_MANAGER_ALL_ACCESS
-                # http://msdn.microsoft.com/en-us/library/windows/desktop/ms685981(v=vs.85).aspx
-                scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0xF003F)
-                scmr.hREnumServicesStatusW(dce, scmrobj["lpScHandle"])
-                self.logger.debug(f"User is admin on {self.host}!")
+                self.logger.debug(f"Checking if user is admin on {self.host}")
+                self.logger.debug("Attempting to list the contents of the C$ share")
+                self.conn.listPath("C$", "*")
+                self.logger.debug(f"Successfully accessed C$ on {self.host}")
                 self.admin_privs = True
-            except scmr.DCERPCException:
-                self.admin_privs = False
-            except Exception as e:
-                self.logger.fail(f"Error checking if user is admin on {self.host}: {e}")
-                self.admin_privs = False
+                return
+            except SessionError as e:
+                if "STATUS_ACCESS_DENIED" in str(e):
+                    self.logger.debug(f"Access denied to C$ on {self.host}")
+                    self.admin_privs = False
+                    return
+                else:
+                    self.logger.debug(f"Error checking C$ access: {str(e)}")
+
+            # If we get here, we couldn't determine admin status
+            self.admin_privs = False
+
+        except Exception as e:
+            self.logger.debug(f"Error checking if user is admin on {self.host}: {str(e)}")
+            self.admin_privs = False
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
