@@ -394,19 +394,7 @@ class DFSCoerceTrigger:
 
             dce.request(request)
         except Exception as e:
-<<<<<<< HEAD
-            if str(e).find("rpc_s_access_denied") >= 0 or str(e).find("ERROR_BAD_NETPATH") >= 0 or str(e).find("RPC_S_INVALID_NET_ADDR") >= 0:
-                self.context.log.debug("NetrDfsAddStdRootForced Success")
-                self.context.log.highlight(f"Exploit Success, {pipe}\\NetrDfsAddStdRootForced")
-                if not always_continue:
-                    return True
-            elif str(e).find("ERROR_NOT_SUPPORTED") >= 0:
-                self.context.log.debug("Not Vulnerable")
-            else:
-                self.context.log.debug(f"Something went wrong, check error status => {e!s}")
-=======
             self.handle_exception(request.__class__.__name__, always_continue, pipe, e)
->>>>>>> upstream/main
 
         self.context.log.debug("Sending NetrDfsAddRootTarget!")
         try:
@@ -430,6 +418,7 @@ class DFSCoerceTrigger:
             self.context.log.debug("NetrDfsAddRootTarget Success")
             return True
         except Exception as e:
+            self.handle_exception(request.__class__.__name__, always_continue, pipe, e)
 
         # Private exploit
         self.context.log.debug("Sending NetrDfsRemoveRootTarget!")
