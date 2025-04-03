@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 from sys import exit
 from impacket.dcerpc.v5 import rrp
@@ -66,7 +65,7 @@ class NXCModule:
         self.method = "smb"
 
     def options(self, context, module_options):
-        '''
+        """
         Name: defender by @byinarie
         Description: Enables/Disables Windows Defender
         Supported Protocols: smb
@@ -80,16 +79,15 @@ class NXCModule:
           
           nxc smb <target> -id 1 -M defender -o ACTION=enable
           nxc smb <target> -id 1 -M defender -o ACTION=disable
-        '''
-        
+        """
         if "ACTION" not in module_options:
             context.log.fail("ACTION option not specified!")
-            print(NXCModule.help())
+            print(NXCModule.show_help())
             exit(1)
 
         if module_options["ACTION"].lower() not in ["enable", "disable"]:
             context.log.fail("Invalid value for ACTION option!")
-            print(NXCModule.help())
+            print(NXCModule.show_help())
             exit(1)
 
         self.action = module_options["ACTION"].lower()
@@ -103,8 +101,8 @@ class NXCModule:
         defender_smb.defender_Wrapper(self.action)
 
     @classmethod
-    def help(cls):
-        help_text = f"""
+    def show_help(cls):
+        return f"""
         Name: {cls.name}
         Description: {cls.description}
         Supported Protocols: {', '.join(cls.supported_protocols)}
@@ -116,7 +114,6 @@ class NXCModule:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
         """
-        return help_text
 
 class Defender_SMB:
     def __init__(self, context, connection):
@@ -150,13 +147,13 @@ class Defender_SMB:
                 ans = rrp.hBaseRegOpenKey(remoteOps._RemoteOperations__rrp, regHandle, full_key_path)
                 keyHandle = ans["phkResult"]
             except Exception as e:
-                self.logger.debug(f"Failed to open key {full_key_path}, Error: {str(e)}")
+                self.logger.debug(f"Failed to open key {full_key_path}, Error: {e!s}")
                 try:
                     ans = rrp.hBaseRegCreateKey(remoteOps._RemoteOperations__rrp, regHandle, full_key_path)
                     keyHandle = ans["phKey"]
                     self.logger.debug(f"Created registry key {full_key_path} via SMB")
                 except Exception as e:
-                    self.logger.error(f"Error creating registry key {full_key_path}: {str(e)}")
+                    self.logger.error(f"Error creating registry key {full_key_path}: {e!s}")
                     success = False
                     continue
 
@@ -165,7 +162,7 @@ class Defender_SMB:
                     rrp.hBaseRegSetValue(remoteOps._RemoteOperations__rrp, keyHandle, key_name, rrp.REG_DWORD, value)
                     self.logger.debug(f"Modified {key_name} to {value} via SMB")
                 except Exception as e:
-                    self.logger.error(f"Error modifying {key_name}: {str(e)}")
+                    self.logger.error(f"Error modifying {key_name}: {e!s}")
                     success = False
 
         return success

@@ -19,9 +19,9 @@ from impacket.examples.regsecrets import (
     LSASecrets as RegSecretsLSASecrets
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
-from impacket.dcerpc.v5 import transport, lsat, lsad, scmr, rrp, srvs, wkst
+from impacket.dcerpc.v5 import transport, lsat, lsad, rrp, srvs, wkst
 from impacket.dcerpc.v5.rpcrt import DCERPCException
-from impacket.dcerpc.v5.transport import DCERPCTransportFactory, SMBTransport
+from impacket.dcerpc.v5.transport import DCERPCTransportFactory
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
 from impacket.dcerpc.v5.epm import MSRPC_UUID_PORTMAP
 from impacket.dcerpc.v5.samr import SID_NAME_USE
@@ -655,13 +655,13 @@ class smb(connection):
                     self.admin_privs = False
                     return
                 else:
-                    self.logger.debug(f"Error checking C$ access: {str(e)}")
+                    self.logger.debug(f"Error checking C$ access: {e!s}")
 
             # If we get here, we couldn't determine admin status
             self.admin_privs = False
 
         except Exception as e:
-            self.logger.debug(f"Error checking if user is admin on {self.host}: {str(e)}")
+            self.logger.debug(f"Error checking if user is admin on {self.host}: {e!s}")
             self.admin_privs = False
 
     def gen_relay_list(self):
