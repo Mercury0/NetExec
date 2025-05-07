@@ -19,6 +19,7 @@ from impacket.examples.regsecrets import (
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
 from impacket.dcerpc.v5 import transport, lsat, lsad, rrp, srvs, wkst
+import impacket.dcerpc.v5.srvs as srvsvc
 from impacket.dcerpc.v5.rpcrt import DCERPCException
 from impacket.dcerpc.v5.transport import DCERPCTransportFactory
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
@@ -606,27 +607,76 @@ class smb(connection):
             if self.password is None and not self.nthash:
                 return
 
-            # Check if we can list the contents of C$
+            # First attempt: RPC via srvsvc - hNetrShareGetInfo
             try:
-                self.logger.debug(f"Checking if user is admin on {self.host}")
-                self.logger.debug("Attempting to list the contents of the C$ share")
-                self.conn.listPath("C$", "*")
-                self.logger.debug(f"Successfully accessed C$ on {self.host}")
-                self.admin_privs = True
-                return
-            except SessionError as e:
-                if "STATUS_ACCESS_DENIED" in str(e):
-                    self.logger.debug(f"Access denied to C$ on {self.host}")
-                    self.admin_privs = False
-                    return
-                else:
-                    self.logger.debug(f"Error checking C$ access: {e!s}")
+                self.logger.debug(f"Checking if user is admin on {self.host} (srvsvc NetrShareGetInfo method)")
 
-            # If we get here, we couldn't determine admin status
-            self.admin_privs = False
+                # Set up DCE/RPC binding to srvsvc over SMB
+                rpctransport = transport.SMBTransport(self.host, filename=r'\srvsvc', smb_connection=self.conn)
+                dce = rpctransport.get_dce_rpc()
+
+                try:
+                    dce.connect()
+                    self.logger.debug(f"Successfully connected to DCE/RPC on {self.host}")
+                except Exception as e:
+                    self.logger.debug(f"DCE/RPC connect failed on {self.host}: {e!s}")
+                    raise e
+
+                try:
+                    dce.bind(srvs.MSRPC_UUID_SRVS)
+                    self.logger.debug(f"Successfully bound to SRVS service on {self.host}")
+                except Exception as e:
+                    self.logger.debug(f"DCE/RPC bind to SRVS failed on {self.host}: {e!s}")
+                    raise e
+
+                try:
+                    # Query only C$ share directly
+                    share_name = 'C$' + '\x00'
+                    resp = srvs.hNetrShareGetInfo(dce, share_name, 1)
+                    self.logger.debug(f"NetrShareGetInfo for C$ succeeded on {self.host}")
+                    self.admin_privs = True
+                except Exception as e:
+                    self.logger.debug(f"NetrShareGetInfo RPC call failed on {self.host}: {e!s}")
+                    raise e
+
+                try:
+                    dce.disconnect()
+                    self.logger.debug(f"Disconnected from DCE/RPC session cleanly on {self.host}")
+                except Exception as e:
+                    self.logger.debug(f"Failed to disconnect DCE/RPC session cleanly: {e!s}")
+
+                return
+
+            except Exception as e:
+                self.logger.debug(f"srvsvc method failed: {e!s}")
+                self.logger.debug(f"Falling back to TreeConnect method for admin check.")
+
+                # Fallback attempt: connectTree
+                try:
+                    self.logger.debug("Attempting to connect to the C$ share without listing contents")
+
+                    tid = self.conn.connectTree("C$")
+
+                    if tid:
+                        self.logger.debug(f"Successfully connected to C$ on {self.host}")
+                        self.admin_privs = True
+                        self.conn.disconnectTree(tid)
+                        return
+                    else:
+                        self.logger.debug(f"Failed to connect to C$ on {self.host}")
+                        self.admin_privs = False
+                        return
+
+                except SessionError as se:
+                    if "STATUS_ACCESS_DENIED" in str(se):
+                        self.logger.debug(f"Access denied when connecting to C$ on {self.host}")
+                        self.admin_privs = False
+                    else:
+                        self.logger.debug(f"Unexpected error during TreeConnect: {se!s}")
+                        self.admin_privs = False
 
         except Exception as e:
-            self.logger.debug(f"Error checking if user is admin on {self.host}: {e!s}")
+            self.logger.debug(f"General error in admin check: {e!s}")
             self.admin_privs = False
 
     def gen_relay_list(self):
