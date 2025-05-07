@@ -253,7 +253,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if not self.args.no_smbv1:
+        if not self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
