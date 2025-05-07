@@ -616,7 +616,7 @@ class smb(connection):
                 self.logger.debug(f"Checking if user is admin on {self.host} (srvsvc NetrShareGetInfo method)")
 
                 # Set up DCE/RPC binding to srvsvc over SMB
-                rpctransport = transport.SMBTransport(self.host, filename=r'\srvsvc', smb_connection=self.conn)
+                rpctransport = transport.SMBTransport(self.host, filename=r"\srvsvc", smb_connection=self.conn)
                 dce = rpctransport.get_dce_rpc()
 
                 try:
@@ -635,7 +635,7 @@ class smb(connection):
 
                 try:
                     # Query only C$ share directly
-                    share_name = 'C$' + '\x00'
+                    share_name = "C$" + "\x00"
                     srvs.hNetrShareGetInfo(dce, share_name, 1)
                     self.logger.debug(f"NetrShareGetInfo for C$ succeeded on {self.host}")
                     self.admin_privs = True
@@ -653,7 +653,7 @@ class smb(connection):
 
             except Exception as e:
                 self.logger.debug(f"srvsvc method failed: {e!s}")
-                self.logger.debug(f"Falling back to TreeConnect method for admin check.")
+                self.logger.debug("Falling back to TreeConnect method for admin check.")
 
                 # Fallback attempt: connectTree
                 try:
