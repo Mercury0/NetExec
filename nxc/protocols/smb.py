@@ -636,7 +636,7 @@ class smb(connection):
                 try:
                     # Query only C$ share directly
                     share_name = 'C$' + '\x00'
-                    resp = srvs.hNetrShareGetInfo(dce, share_name, 1)
+                    srvs.hNetrShareGetInfo(dce, share_name, 1)
                     self.logger.debug(f"NetrShareGetInfo for C$ succeeded on {self.host}")
                     self.admin_privs = True
                 except Exception as e:
