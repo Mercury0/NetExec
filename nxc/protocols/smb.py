@@ -19,7 +19,6 @@ from impacket.examples.regsecrets import (
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
 from impacket.dcerpc.v5 import transport, lsat, lsad, rrp, srvs, wkst
-import impacket.dcerpc.v5.srvs as srvsvc
 from impacket.dcerpc.v5.rpcrt import DCERPCException
 from impacket.dcerpc.v5.transport import DCERPCTransportFactory
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
@@ -254,7 +253,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if not self.args.smbv1:
+        if self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -585,22 +584,27 @@ class smb(connection):
     def create_conn_obj(self):
         """
         Tries to create a connection object to the target host.
-        On first try, it will try to create a SMBv3 connection.
-        On further tries, it will remember which SMB version is supported and create a connection object accordingly.
-
-        :param no_smbv1: If True, it will not try to create a SMBv1 connection
+        First tries SMBv3. Falls back to SMBv1 only if --smbv1 is explicitly passed.
         """
-        # Initial negotiation
         if self.smbv3 is None:
             self.smbv3 = self.create_smbv3_conn()
             if self.smbv3:
                 return True
             elif not self.is_timeouted:
-                return self.create_smbv1_conn()
+                if self.args.smbv1:
+                    return self.create_smbv1_conn()
+                else:
+                    self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                    return False
         elif self.smbv3:
             return self.create_smbv3_conn()
         else:
-            return self.create_smbv1_conn()
+            if self.args.smbv1:
+                return self.create_smbv1_conn()
+            else:
+                self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                return False
+
 
     def check_if_admin(self):
         try:
