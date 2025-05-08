@@ -619,7 +619,7 @@ class smb(connection):
 
                 fid = self.conn.createFile(
                     tid,
-                    '',
+                    "",
                     desiredAccess=FILE_READ_ATTRIBUTES,
                     creationOption=FILE_DIRECTORY_FILE,
                     creationDisposition=FILE_OPEN
