@@ -32,7 +32,7 @@ from impacket.krb5 import constants
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.dcomrt import DCOMConnection
 from impacket.dcerpc.v5.dcom.wmi import CLSID_WbemLevel1Login, IID_IWbemLevel1Login, IWbemLevel1Login
-from impacket.smb3structs import FILE_SHARE_WRITE, FILE_SHARE_DELETE
+from impacket.smb3structs import FILE_SHARE_WRITE, FILE_SHARE_DELETE, FILE_READ_ATTRIBUTES, FILE_DIRECTORY_FILE, FILE_OPEN
 from impacket.dcerpc.v5 import tsts as TSTS
 
 from nxc.config import process_secret, host_info_colors
@@ -611,76 +611,41 @@ class smb(connection):
             if self.password is None and not self.nthash:
                 return
 
-            # First attempt: RPC via srvsvc - hNetrShareGetInfo
+            self.logger.debug(f"Opening handle to C$ root on {self.host} [0x05 opcode]")
+
             try:
-                self.logger.debug(f"Checking if user is admin on {self.host} (srvsvc NetrShareGetInfo method)")
+                tid = self.conn.connectTree("C$")
+                self.logger.debug(f"Connected to C$ on {self.host} (Tree ID: {tid})")
 
-                # Set up DCE/RPC binding to srvsvc over SMB
-                rpctransport = transport.SMBTransport(self.host, filename=r"\srvsvc", smb_connection=self.conn)
-                dce = rpctransport.get_dce_rpc()
+                fid = self.conn.createFile(
+                    tid,
+                    '',
+                    desiredAccess=FILE_READ_ATTRIBUTES,
+                    creationOption=FILE_DIRECTORY_FILE,
+                    creationDisposition=FILE_OPEN
+                )
+                self.logger.debug(f"Successfully opened C$ root on {self.host}")
 
-                try:
-                    dce.connect()
-                    self.logger.debug(f"Successfully connected to DCE/RPC on {self.host}")
-                except Exception as e:
-                    self.logger.debug(f"DCE/RPC connect failed on {self.host}: {e!s}")
-                    raise e
+                self.admin_privs = True
 
-                try:
-                    dce.bind(srvs.MSRPC_UUID_SRVS)
-                    self.logger.debug(f"Successfully bound to SRVS service on {self.host}")
-                except Exception as e:
-                    self.logger.debug(f"DCE/RPC bind to SRVS failed on {self.host}: {e!s}")
-                    raise e
+                # Cleanup
+                self.conn.closeFile(tid, fid)
+                self.conn.disconnectTree(tid)
 
-                try:
-                    # Query only C$ share directly
-                    share_name = "C$" + "\x00"
-                    srvs.hNetrShareGetInfo(dce, share_name, 1)
-                    self.logger.debug(f"NetrShareGetInfo for C$ succeeded on {self.host}")
-                    self.admin_privs = True
-                except Exception as e:
-                    self.logger.debug(f"NetrShareGetInfo RPC call failed on {self.host}: {e!s}")
-                    raise e
-
-                try:
-                    dce.disconnect()
-                    self.logger.debug(f"Disconnected from DCE/RPC session cleanly on {self.host}")
-                except Exception as e:
-                    self.logger.debug(f"Failed to disconnect DCE/RPC session cleanly: {e!s}")
-
-                return
+            except SessionError as se:
+                if "STATUS_ACCESS_DENIED" in str(se):
+                    self.logger.debug(f"Access denied opening C$ root on {self.host}")
+                    self.admin_privs = False
+                else:
+                    self.logger.debug(f"Unexpected SessionError during admin check: {se}")
+                    self.admin_privs = False
 
             except Exception as e:
-                self.logger.debug(f"srvsvc method failed: {e!s}")
-                self.logger.debug("Falling back to TreeConnect method for admin check.")
-
-                # Fallback attempt: connectTree
-                try:
-                    self.logger.debug("Attempting to connect to the C$ share without listing contents")
-
-                    tid = self.conn.connectTree("C$")
-
-                    if tid:
-                        self.logger.debug(f"Successfully connected to C$ on {self.host}")
-                        self.admin_privs = True
-                        self.conn.disconnectTree(tid)
-                        return
-                    else:
-                        self.logger.debug(f"Failed to connect to C$ on {self.host}")
-                        self.admin_privs = False
-                        return
-
-                except SessionError as se:
-                    if "STATUS_ACCESS_DENIED" in str(se):
-                        self.logger.debug(f"Access denied when connecting to C$ on {self.host}")
-                        self.admin_privs = False
-                    else:
-                        self.logger.debug(f"Unexpected error during TreeConnect: {se!s}")
-                        self.admin_privs = False
+                self.logger.debug(f"General error during admin check: {e}")
+                self.admin_privs = False
 
         except Exception as e:
-            self.logger.debug(f"General error in admin check: {e!s}")
+            self.logger.debug(f"General error in admin check wrapper: {e}")
             self.admin_privs = False
 
     def gen_relay_list(self):
