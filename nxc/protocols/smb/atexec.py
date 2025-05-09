@@ -5,6 +5,7 @@ from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE, RPC_C_AUTHN_LEVE
 from nxc.helpers.misc import gen_random_string
 from time import sleep
 from datetime import datetime, timedelta
+import contextlib
 
 
 class TSCH_EXEC:
@@ -71,10 +72,8 @@ class TSCH_EXEC:
     def gen_xml(self, command, fileless=False):
         
         safer_command = command
-        use_powershell = False
         
         if "powershell" in command.lower() and ("-command" in command.lower() or "-c " in command.lower()):
-            use_powershell = True
             self.logger.debug("PowerShell command detected, keeping as is (user requested)")
             
             # case randomization
@@ -92,7 +91,6 @@ class TSCH_EXEC:
         random_date = datetime.now().strftime("%Y%m%d")
         random_suffix = gen_random_string(4)
         
-        # Format: DiagTrack-20230508-A7F3.log (example)
         legit_filename = f"{system_prefix}{random_date}-{random_suffix}.log"
 
         # get time boundaries
@@ -173,7 +171,7 @@ class TSCH_EXEC:
         try:
             dce.connect()
         except Exception as e:
-            self.logger.fail(f"Failed to connect to DCE/RPC service: {str(e)}")
+            self.logger.fail(f"Failed to connect to DCE/RPC service: {e!s}")
             return
 
         import random
@@ -204,16 +202,14 @@ class TSCH_EXEC:
             dce.bind(tsch.MSRPC_UUID_TSCHS)
             tsch.hSchRpcRegisterTask(dce, f"\\{tmpName}", xml, tsch.TASK_CREATE, NULL, tsch.TASK_LOGON_NONE)
         except Exception as e:
-            if hasattr(e, 'error_code') and e.error_code and hex(e.error_code) == "0x80070005":
+            if hasattr(e, "error_code") and e.error_code and hex(e.error_code) == "0x80070005":
                 self.logger.fail("ATEXEC: Create schedule task got blocked.")
             else:
                 self.logger.fail(str(e))
             
             # Clean disconnect
-            try:
+            with contextlib.suppress(Exception):
                 dce.disconnect()
-            except:
-                pass
             return
 
         # After task creation, try to run it immediately
@@ -222,7 +218,7 @@ class TSCH_EXEC:
             tsch.hSchRpcRun(dce, f"\\{tmpName}", NULL)
             self.logger.debug("Task run request sent successfully")
         except Exception as e:
-            self.logger.debug(f"Could not run task immediately: {str(e)}. Will rely on trigger")
+            self.logger.debug(f"Could not run task immediately: {e!s}. Will rely on trigger")
             
 
         # Wait for task execution
@@ -234,7 +230,7 @@ class TSCH_EXEC:
         
         while not done and wait_attempts < 15:
             try:
-                self.logger.debug(f"Checking if task \\{tmpName} has run (attempt {wait_attempts+1}/15)")
+                self.logger.debug(f"Checking if task \\{tmpName} has run (attempt {wait_attempts + 1}/15)")
                 resp = tsch.hSchRpcGetLastRunInfo(dce, f"\\{tmpName}")
                 if resp["pLastRuntime"]["wYear"] != 0:
                     self.logger.debug(f"Task \\{tmpName} has run")
@@ -248,7 +244,7 @@ class TSCH_EXEC:
                 if "SCHED_S_TASK_HAS_NOT_RUN" in str(e):
                     self.logger.debug("Task has not run yet (expected status), continuing to wait")
                 else:
-                    self.logger.debug(f"Error checking task: {str(e)}")
+                    self.logger.debug(f"Error checking task: {e!s}")
                 
                 wait_attempts += 1
                 sleep(2)
@@ -269,7 +265,7 @@ class TSCH_EXEC:
             self.logger.info(f"Deleting task \\{tmpName}")
             tsch.hSchRpcDelete(dce, f"\\{tmpName}")
         except Exception as e:
-            self.logger.debug(f"Error deleting task: {str(e)}")
+            self.logger.debug(f"Error deleting task: {e!s}")
 
         if not task_ran and self.__retOutput:
             self.logger.debug("Waiting additional time for command execution to complete")
@@ -287,11 +283,12 @@ class TSCH_EXEC:
                         with open(file_path) as output:
                             self.output_callback(output.read())
                         
+                        # cleanup
                         try:
                             os.remove(file_path)
                             self.logger.debug(f"Removed fileless output file: {file_path}")
-                        except:
-                            pass
+                        except OSError as e:
+                            self.logger.debug(f"Could not remove file {file_path}: {e}")
                         break
                     except OSError:
                         sleep(2)
@@ -303,11 +300,11 @@ class TSCH_EXEC:
                 sleep(1)
                 
                 output_basename = os.path.basename(self.__output_filename)
-                output_dirname = os.path.dirname(self.__output_filename.strip('\\'))
+                os.path.dirname(self.__output_filename.strip("\\"))
                 
                 # The __output_filename has the form "\Windows\Temp\filename.log"
                 # For SMB access, we need "Windows\Temp\filename.log" relative to the share
-                smb_relative_path = self.__output_filename.strip('\\')
+                smb_relative_path = self.__output_filename.strip("\\")
                 
                 while True:
                     try:
@@ -345,10 +342,8 @@ class TSCH_EXEC:
                         self.logger.debug(f"Cleaning up output file {output_basename}")
                         smbConnection.deleteFile(self.__share, smb_relative_path)
                     except Exception as e:
-                        self.logger.debug(f"Could not delete output file: {str(e)}")
+                        self.logger.debug(f"Could not delete output file: {e!s}")
 
         # Always ensure proper disconnect
-        try:
+        with contextlib.suppress(Exception):
             dce.disconnect()
-        except:
-            pass
