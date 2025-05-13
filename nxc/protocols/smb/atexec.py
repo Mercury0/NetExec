@@ -71,7 +71,7 @@ class TSCH_EXEC:
         try:
             # Create a temporary task to get the remote system's time
             cmd = "Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'"
-            b64_cmd = base64.b64encode(cmd.encode('utf-16le')).decode()
+            b64_cmd = base64.b64encode(cmd.encode("utf-16le")).decode()
             
             # Generate a unique task name
             time_query_task = f"SystemTimeQuery-{uuid.uuid4().hex[:8].upper()}"
@@ -137,7 +137,7 @@ class TSCH_EXEC:
             time_output_file = f"C:\\Windows\\Temp\\systime-{gen_random_string(8)}.txt"
             time_query_xml = time_query_xml.replace(cmd, f"{cmd} | Out-File -FilePath '{time_output_file}' -Encoding ASCII")
             
-            b64_cmd = base64.b64encode(f"{cmd} | Out-File -FilePath '{time_output_file}' -Encoding ASCII".encode('utf-16le')).decode()
+            b64_cmd = base64.b64encode(f"{cmd} | Out-File -FilePath '{time_output_file}' -Encoding ASCII".encode("utf-16le")).decode()
             time_query_xml = time_query_xml.replace("{b64_cmd}", b64_cmd)
             
             # Register and run task
@@ -155,19 +155,17 @@ class TSCH_EXEC:
             remote_time = None
             try:
                 smbConnection.getFile(self.__share, smb_path, self.output_callback)
-                remote_time_str = self.__outputBuffer.decode('ascii', errors='ignore').strip()
+                remote_time_str = self.__outputBuffer.decode("ascii", errors="ignore").strip()
                 
                 # Reset the output buffer
                 self.__outputBuffer = b""
                 
                 # Clean up the time file
-                try:
+                with contextlib.suppress(Exception):
                     smbConnection.deleteFile(self.__share, smb_path)
-                except:
-                    pass
                 
                 # Verify we got a valid datetime
-                if re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', remote_time_str):
+                if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", remote_time_str):
                     remote_time = remote_time_str
                     self.logger.debug(f"Target system time: {remote_time}")
                 else:
@@ -176,10 +174,8 @@ class TSCH_EXEC:
                 self.logger.debug(f"Failed to read remote time file: {e}")
             
             # Delete task
-            try:
+            with contextlib.suppress(Exception):
                 tsch.hSchRpcDelete(dce, f"\\{time_query_task}")
-            except:
-                pass
             
             # Disconnect
             with contextlib.suppress(Exception):
@@ -287,15 +283,14 @@ class TSCH_EXEC:
             ps_cmd = safer_command
 
         # Generate Base64 encoded PowerShell command
-        b64 = base64.b64encode(ps_cmd.encode('utf-16le')).decode()
+        b64 = base64.b64encode(ps_cmd.encode("utf-16le")).decode()
 
         # Using basic time format that will always be valid - not dependent on accurate time
-        dummy_time = "2025-01-01T00:00:00"
         current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         # Create XML with no time-dependent triggers
         # Use OnRegistration without time boundaries, which will trigger immediately regardless of system time
-        xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+        return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>{current_time}</Date>
@@ -338,13 +333,11 @@ class TSCH_EXEC:
     </Exec>
   </Actions>
 </Task>"""
-        return xml
 
     def windows_path_to_smb(self, windows_path):
         """Convert a Windows path to SMB path format correctly handling nested directories."""
         # Remove drive letter and normalize slashes
-        path = windows_path.replace("C:", "").replace("\\", "/").lstrip("/")
-        return path
+        return windows_path.replace("C:", "").replace("\\", "/").lstrip("/")
 
     def execute_handler(self, command, fileless=False):
         dce = self.__rpctransport.get_dce_rpc()
@@ -391,8 +384,8 @@ class TSCH_EXEC:
         try:
             tsch.hSchRpcRun(dce, f"\\{tmpName}", NULL)
             self.logger.debug("Task run request sent successfully")
-        except Exception as e:
-            self.logger.debug(f"Executing task using trigger..")
+        except Exception:
+            self.logger.debug("Executing task using trigger..")
             run_immediately = False
             
         # Increase initial wait time if we weren't able to run the task immediately
@@ -536,10 +529,8 @@ class TSCH_EXEC:
                     except Exception as e:
                         self.logger.debug(f"Could not delete output file: {e!s}")
                         # Try with just the filename as a fallback
-                        try:
+                        with contextlib.suppress(Exception):
                             smbConnection.deleteFile(self.__share, output_basename)
-                        except Exception:
-                            pass
 
         # Always ensure proper disconnect
         with contextlib.suppress(Exception):
