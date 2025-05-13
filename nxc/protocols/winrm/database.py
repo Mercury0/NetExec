@@ -212,7 +212,7 @@ class database(BaseDB):
         hosts = self.get_hosts(host)
 
         if users and hosts:
-            for user, host in zip(users, hosts, strict=True):
+            for user, host in zip(users, hosts, strict=False):
                 user_id = user[0]
                 host_id = host[0]
                 link = {"userid": user_id, "hostid": host_id}
