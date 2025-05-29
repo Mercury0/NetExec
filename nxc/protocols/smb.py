@@ -611,7 +611,6 @@ class smb(connection):
                 self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
                 return False
 
-
     def check_if_admin(self):
         try:
             if self.password is None and not self.nthash:

@@ -50,6 +50,7 @@ DISABLE_REGISTRY_KEYS = {
 # Reference
 # https://admx.help/HKLM/Software/Policies/Microsoft/Windows%20Defender
 
+
 class NXCModule:
     """Defender by @byinarie"""
     name = "defender"
@@ -114,6 +115,7 @@ class NXCModule:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
         """
+
 
 class Defender_SMB:
     def __init__(self, context, connection):
