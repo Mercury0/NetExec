@@ -15,7 +15,6 @@ from nxc.logger import nxc_logger
 from nxc.config import nxc_config, nxc_workspace, config_log, ignore_opsec
 from nxc.database import create_db_engine
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import asyncio
 from nxc.helpers import powershell
 import shutil
 import os
