@@ -621,7 +621,7 @@ class smb(connection):
 
             try:
                 tid = self.conn.connectTree("C$")
-                self.logger.debug(f"Connected to C$ on {self.host} (Tree ID: {tid})")
+                self.logger.debug(f"Successful C$ mount. User is possible admin")
 
                 fid = self.conn.createFile(
                     tid,
@@ -630,7 +630,6 @@ class smb(connection):
                     creationOption=FILE_DIRECTORY_FILE,
                     creationDisposition=FILE_OPEN
                 )
-                self.logger.debug(f"Successfully opened C$ root on {self.host}")
 
                 self.admin_privs = True
                 self.c_share_write_checked = True

@@ -312,7 +312,7 @@ class connection:
         if self.failed_logins == self.args.fail_limit:
             return True
 
-        if username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username]:  # noqa: SIM103
+        if username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username]:
             return True
 
         return False
@@ -532,13 +532,20 @@ class connection:
             data.extend(parsed_data)
 
         if self.args.use_kcache:
-            self.logger.debug("Trying to authenticate using Kerberos cache")
+            self.logger.debug("Trying to authenticate using Kerberos cache..")
+            
+            # Check if TGT is still valid
+            if not self.check_tgt_validity():
+                self.logger.fail("TGT in cache is expired or invalid. Please refresh your TGT.")
+                return False
+                
             with sem:
                 username = self.args.username[0] if len(self.args.username) else ""
                 password = self.args.password[0] if len(self.args.password) else ""
-                self.kerberos_login(self.domain, username, password, "", "", self.kdcHost, True)
-                self.logger.info("Successfully authenticated using Kerberos cache")
-                return True
+                result = self.kerberos_login(self.domain, username, password, "", "", self.kdcHost, True)
+                if result:
+                    self.logger.info("Successfully authenticated using Kerberos cache")
+                return result
 
         if self.args.pfx_cert or self.args.pfx_base64 or self.args.pem_cert:
             self.logger.debug("Trying to authenticate using Certificate pfx")
@@ -586,3 +593,53 @@ class connection:
         for module_path in self.module_paths:
             module = loader.init_module(module_path)
             self.modules.append(module)
+
+    def check_tgt_validity(self):
+        """Check if the TGT in the current cache is still valid"""
+        try:
+            import os
+            from datetime import datetime
+            from impacket.krb5.ccache import CCache
+            
+            # Get current cache file path
+            ccache_path = os.environ.get('KRB5CCNAME')
+            if not ccache_path:
+                # Try default location
+                ccache_path = f"/tmp/krb5cc_{os.getuid()}"
+            
+            if not os.path.exists(ccache_path):
+                self.logger.debug(f"No ccache file found at {ccache_path}")
+                return False
+            
+            # Load and check the cache
+            try:
+                ccache = CCache.loadFile(ccache_path)
+                if not ccache.credentials:
+                    self.logger.debug("No credentials found in ccache")
+                    return False
+                
+                # Check the first credential (TGT)
+                cred = ccache.credentials[0]
+                endtime = cred['time']['endtime']
+                current_time = datetime.now().timestamp()
+                
+                if endtime <= current_time:
+                    self.logger.debug("TGT has expired")
+                    return False
+                
+                # Check if ticket expires soon (within 5 minutes)
+                time_left = endtime - current_time
+                if time_left < 300:  # 5 minutes
+                    self.logger.debug(f"TGT expires in {int(time_left/60)} minutes")
+                else:
+                    self.logger.debug(f"TGT is valid for {int(time_left/3600)} hours")
+                
+                return True
+                
+            except Exception as e:
+                self.logger.debug(f"Error reading ccache: {e}")
+                return False
+            
+        except Exception as e:
+            self.logger.debug(f"Error checking TGT validity: {e}")
+            return False
