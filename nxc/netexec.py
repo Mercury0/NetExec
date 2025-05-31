@@ -40,7 +40,7 @@ if platform.system() != "Windows":
     resource.setrlimit(resource.RLIMIT_NOFILE, file_limit)
 
 
-async def start_run(protocol_obj, args, db, targets):  # noqa: RUF029
+async def start_run(protocol_obj, args, db, targets):
     futures = []
     nxc_logger.debug("Creating ThreadPoolExecutor")
     if args.no_progress or len(targets) == 1:
@@ -58,13 +58,33 @@ async def start_run(protocol_obj, args, db, targets):  # noqa: RUF029
             nxc_logger.debug(f"Creating thread for {protocol_obj}")
             futures = [executor.submit(protocol_obj, args, db, target) for target in targets]
             for _ in as_completed(futures):
-                current += 1  # noqa: SIM113
+                current += 1
                 progress.update(tasks, completed=current)
     for future in as_completed(futures):
         try:
             future.result()
         except Exception:
             nxc_logger.exception(f"Exception for target {targets[futures.index(future)]}: {future.exception()}")
+
+
+def check_and_setup_ccache():
+    """
+    Check for Kerberos ccache and automatically set KRB5CCNAME if needed.
+    Returns True if ccache is available, False otherwise.
+    """
+    # If KRB5CCNAME is already set, we're good
+    if os.environ.get("KRB5CCNAME"):
+        return True
+    
+    # Check for default ccache location
+    default_ccache = f"/tmp/krb5cc_{os.getuid()}"
+    if os.path.exists(default_ccache):
+        # Automatically set KRB5CCNAME to the default location
+        os.environ["KRB5CCNAME"] = default_ccache
+        nxc_logger.debug(f"Auto-detected ccache at {default_ccache}, setting KRB5CCNAME")
+        return True
+    
+    return False
 
 
 def main():
@@ -90,8 +110,8 @@ def main():
         nxc_logger.fail("Password is required, even if a key file is used - if no passphrase for key, use `-p ''`")
         exit(1)
 
-    if args.use_kcache and not os.environ.get("KRB5CCNAME"):
-        nxc_logger.error("KRB5CCNAME environment variable is not set")
+    if args.use_kcache and not check_and_setup_ccache():
+        nxc_logger.error("No Kerberos ccache found. Generate one with --generate-tgt or set KRB5CCNAME manually")
         exit(1)
 
     targets = []
@@ -102,8 +122,8 @@ def main():
                 start_id, end_id = cred_id.split("-")
                 try:
                     for n in range(int(start_id), int(end_id) + 1):
-                        args.cred_id.append(n)    # noqa: B909
-                    args.cred_id.remove(cred_id)  # noqa: B909
+                        args.cred_id.append(n)
+                    args.cred_id.remove(cred_id)
                 except Exception as e:
                     nxc_logger.error(f"Error parsing database credential id: {e}")
                     exit(1)

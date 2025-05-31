@@ -4,6 +4,7 @@ import os
 import random
 import re
 from Cryptodome.Hash import MD4
+import shutil
 
 from impacket.smbconnection import SMBConnection, SessionError
 from impacket.smb import SMB_DIALECT
@@ -268,7 +269,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if self.args.smbv1:
+        if hasattr(self.args, "smbv1") and self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -680,11 +681,29 @@ class smb(connection):
 
             ccache = CCache()
             ccache.fromTGT(tgt, oldSessionKey, sessionKey)
+            
+            # Save to user-specified location
             tgt_file = f"{self.args.generate_tgt}.ccache"
             ccache.saveFile(tgt_file)
+            tgt_file_abs = os.path.abspath(tgt_file)
+            
+            # Also save to default Kerberos location for immediate use
+            default_ccache = f"/tmp/krb5cc_{os.getuid()}"
+            try:
+                shutil.copy2(tgt_file_abs, default_ccache)
+                self.logger.debug(f"Copied ccache to default location: {default_ccache}")
+                ccache_injected = True
+            except Exception as e:
+                self.logger.debug(f"Failed to copy to default location: {e}")
+                ccache_injected = False
 
-            self.logger.success(f"TGT saved to: {tgt_file}")
-            self.logger.success(f"Run the following command to use the TGT: export KRB5CCNAME={tgt_file}")
+            # Report results
+            self.logger.success(f"TGT saved to: {tgt_file_abs}")
+            if ccache_injected:
+                self.logger.success(f"TGT injected into current session. Use: nxc smb <target> -k --use-kcache")
+            else:
+                self.logger.success(f"To use this TGT, run: export KRB5CCNAME={tgt_file_abs}")
+                
         except Exception as e:
             self.logger.fail(f"Failed to get TGT: {e}")
 
@@ -974,7 +993,7 @@ class smb(connection):
         maxRemoteIp = maxRemoteIp if len("RemoteAddress") < maxRemoteIp else len("RemoteAddress") + 1
         maxClientName = max(len(sessions[i]["ClientName"]) + 1 for i in sessions)
         maxClientName = maxClientName if len("ClientName") < maxClientName else len("ClientName") + 1
-        template = ("{SESSIONNAME: <%d} "  # noqa: UP031
+        template = ("{SESSIONNAME: <%d} "
                     "{USERNAME: <%d} "
                     "{ID: <%d} "
                     "{IPv4: <16} "
@@ -1045,7 +1064,7 @@ class smb(connection):
             self.logger.success("Enumerated processes")
             maxImageNameLen = max(len(i["ImageName"]) for i in res)
             maxSidLen = max(len(i["pSid"]) for i in res)
-            template = "{: <%d} {: <8} {: <11} {: <%d} {: >12}" % (maxImageNameLen, maxSidLen)  # noqa: UP031
+            template = "{: <%d} {: <8} {: <11} {: <%d} {: >12}" % (maxImageNameLen, maxSidLen)
             self.logger.highlight(template.format("Image Name", "PID", "Session#", "SID", "Mem Usage"))
             self.logger.highlight(template.replace(": ", ":=").format("", "", "", "", ""))
             for procInfo in res:
@@ -1743,7 +1762,7 @@ class smb(connection):
 
         if self.args.pvk is not None:
             try:
-                self.pvkbytes = open(self.args.pvk, "rb").read()  # noqa: SIM115
+                self.pvkbytes = open(self.args.pvk, "rb").read()
                 self.logger.success(f"Loading domain backupkey from {self.args.pvk}")
             except Exception as e:
                 self.logger.fail(str(e))
@@ -1764,7 +1783,7 @@ class smb(connection):
             use_kcache=self.use_kcache,
         )
 
-        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")  # noqa: SIM115
+        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")
 
         conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
         if conn is None:
@@ -2051,6 +2070,6 @@ class smb(connection):
 
     def mark_guest(self):
         return highlight(f"{highlight('(Guest)')}" if self.is_guest else "")
-    
+
     def mark_stealth(self):
         return highlight(f"({stealth_label})" if self.admin_privs else "")
