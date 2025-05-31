@@ -865,7 +865,7 @@ all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2
 
 [[package]]
 name = "impacket"
-version = "0.13.0.dev0+20250527.165759.abfaea2b"
+version = "0.13.0.dev0+20250531.82349.9cfaf323"
 description = "Network protocols Constructors and Dissectors"
 optional = false
 python-versions = "*"
@@ -876,21 +876,21 @@ develop = false
 [package.dependencies]
 charset_normalizer = "*"
 flask = ">=1.0"
+future = "*"
 ldap3 = ">2.5.0,<2.5.2 || >2.5.2,<2.6 || >2.6"
 ldapdomaindump = ">=0.9.0"
 pyasn1 = ">=0.2.3"
 pyasn1_modules = "*"
 pycryptodomex = "*"
 pyOpenSSL = "24.0.0"
-pyreadline3 = {version = "*", markers = "sys_platform == \"win32\""}
 setuptools = "*"
 six = "*"
 
 [package.source]
 type = "git"
-url = "https://github.com/Pennyw0rth/impacket.git"
+url = "https://github.com/Mercury0/impacket"
 reference = "HEAD"
-resolved_reference = "abfaea2b613cab86a94ae7e5edbf5801ef347f30"
+resolved_reference = "9cfaf3230e63366a89610e04157c243f39e28265"
 
 [[package]]
 name = "iniconfig"
@@ -1875,22 +1875,6 @@ unicrypto = ">=0.0.10,<=0.1.0"
 winacl = ">=0.1.9,<=0.2.0"
 
 [[package]]
-name = "pyreadline3"
-version = "3.5.4"
-description = "A python implementation of GNU readline."
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-markers = "sys_platform == \"win32\""
-files = [
-    {file = "pyreadline3-3.5.4-py3-none-any.whl", hash = "sha256:eaf8e6cc3c49bcccf145fc6067ba8643d1df34d604a1ec0eccbf7a18e6d3fae6"},
-    {file = "pyreadline3-3.5.4.tar.gz", hash = "sha256:8d57d53039a1c75adba8e50dd3d992b28143480816187ea5efbd5c78e6c885b7"},
-]
-
-[package.extras]
-dev = ["build", "flake8", "mypy", "pytest", "twine"]
-
-[[package]]
 name = "pyspnego"
 version = "0.11.2"
 description = "Windows Negotiate Authentication Client and Server"
@@ -2463,4 +2447,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "e02f61c9bb3bccd22fc51f90a9e09552afe50cb309155959dbb3ff06fea4d736"
+content-hash = "fdc6380d14f838a15915fc397e3cac0713ae22998a81388a84cfab8db52017ae"
