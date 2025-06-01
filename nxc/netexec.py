@@ -108,9 +108,14 @@ def main():
         nxc_logger.fail("Password is required, even if a key file is used - if no passphrase for key, use `-p ''`")
         exit(1)
 
-    if args.use_kcache and not check_and_setup_ccache():
-        nxc_logger.error("No Kerberos ccache found. Generate one with --generate-tgt or set KRB5CCNAME manually")
-        exit(1)
+    # Handle Kerberos authentication setup
+    if args.use_kcache:
+        if not check_and_setup_ccache():
+            nxc_logger.error("No Kerberos ccache found. Generate one with --generate-tgt or set KRB5CCNAME manually")
+            exit(1)
+    elif args.kerberos:
+        # Auto-detect and setup ccache for -k flag even without --use-kcache
+        check_and_setup_ccache()
 
     targets = []
 

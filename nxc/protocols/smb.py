@@ -4,7 +4,7 @@ import os
 import random
 import re
 from Cryptodome.Hash import MD4
-import shutil
+import time
 
 from impacket.smbconnection import SMBConnection, SessionError
 from impacket.smb import SMB_DIALECT
@@ -66,11 +66,11 @@ from dploot.triage.credentials import CredentialsTriage
 from dploot.lib.target import Target
 from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
-from time import time, ctime, sleep
 from datetime import datetime
 from traceback import format_exc
 from termcolor import colored
 import contextlib
+from time import sleep, ctime
 
 smb_share_name = gen_random_string(5).upper()
 
@@ -329,33 +329,166 @@ class smb(connection):
 
         return self.host, self.hostname, self.targetDomain
 
+    def is_ccache_valid(self, ccache_path=None):
+        """
+        Check if the current ccache contains a valid, non-expired TGT.
+        Shows actual TGT validity period and ensures sufficient remaining time.
+        """
+        try:
+            if ccache_path is None:
+                ccache_path = os.environ.get("KRB5CCNAME")
+                if not ccache_path:
+                    self.logger.debug("No KRB5CCNAME environment variable set")
+                    return False
+            
+            if not os.path.exists(ccache_path):
+                self.logger.debug(f"Ccache file does not exist: {ccache_path}")
+                return False
+            
+            # Check if file is not empty
+            file_stats = os.stat(ccache_path)
+            if file_stats.st_size == 0:
+                self.logger.debug("Ccache file is empty")
+                return False
+            
+            # Try to parse ccache using a more direct approach
+            try:
+                # Use klist command as fallback to get ticket info
+                import subprocess
+                result = subprocess.run(["klist", "-c", ccache_path], 
+                                      capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    lines = result.stdout.split("\n")
+                    for line in lines:
+                        line = line.strip()
+                        # Look for krbtgt ticket line
+                        if "krbtgt/" in line.lower() and "@" in line:
+                            # Parse the line to extract expiration time
+                            # Format is usually: MM/DD/YY HH:MM:SS  MM/DD/YY HH:MM:SS  krbtgt/DOMAIN@DOMAIN
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                try:
+                                    # Second timestamp is the expiration time (parts[2] and parts[3])
+                                    exp_str = f"{parts[2]} {parts[3]}" if len(parts) >= 4 else f"{parts[0]} {parts[1]}"
+
+                                    # Try different date formats
+                                    for fmt in ["%m/%d/%y %H:%M:%S", "%m/%d/%Y %H:%M:%S"]:
+                                        try:
+                                            exp_time = datetime.strptime(exp_str, fmt)
+                                            # Use local time for both current and expiration time
+                                            now = datetime.now()
+                                            
+                                            time_remaining = exp_time - now
+                                            hours_remaining = time_remaining.total_seconds() / 3600
+                                            
+                                            if hours_remaining > 1:  # Require at least 1 hour remaining
+                                                self.logger.debug(f"Valid TGT found, expires: {exp_time.strftime('%Y-%m-%d %H:%M:%S')} ({hours_remaining:.1f} hours remaining)")
+                                                return True
+                                            else:
+                                                self.logger.debug(f"TGT expires too soon: {exp_time.strftime('%Y-%m-%d %H:%M:%S')} ({hours_remaining:.1f} hours remaining)")
+                                                return False
+                                        except ValueError:
+                                            continue
+                                except (ValueError, IndexError):
+                                    continue
+                
+                # If klist parsing failed, try simple impacket parsing with error handling
+                try:
+                    CCache.parseFile(ccache_path)
+                    # If we get here without error, assume ccache is valid
+                    self.logger.debug("Ccache parsed successfully by impacket (assuming valid)")
+                    return True
+                except Exception as e:
+                    self.logger.debug(f"Impacket ccache parsing failed: {e}")
+                    
+                    # As final fallback, check file age (must be less than 8 hours old)
+                    current_time = time.time()
+                    age_hours = (current_time - file_stats.st_mtime) / 3600
+                    if age_hours < 8:
+                        self.logger.debug(f"Using fallback validation: ccache age {age_hours:.1f} hours (assuming valid)")
+                        return True
+                    else:
+                        self.logger.debug(f"Ccache too old for fallback: {age_hours:.1f} hours")
+                        return False
+                        
+            except subprocess.TimeoutExpired:
+                self.logger.debug("klist command timed out")
+                return False
+            except FileNotFoundError:
+                self.logger.debug("klist command not found, using fallback validation")
+                # Fallback to file age check
+                current_time = time.time()
+                age_hours = (current_time - file_stats.st_mtime) / 3600
+                if age_hours < 6:
+                    self.logger.debug(f"Fallback validation: ccache age {age_hours:.1f} hours (assuming valid)")
+                    return True
+                else:
+                    return False
+            
+        except Exception as e:
+            self.logger.debug(f"Error checking ccache validity: {e}")
+            return False
+
+    def ensure_tgt_available(self):
+        """
+        Ensure a valid TGT is available for Kerberos authentication.
+        If no valid TGT exists and we have credentials, generate one automatically.
+        """
+        # Check if we already have a valid TGT
+        if self.is_ccache_valid():
+            return True
+        
+        # If we don't have credentials to generate a TGT, we can't help
+        if not (self.username and (self.password or self.nthash)):
+            self.logger.debug("No valid TGT found and no credentials available to generate one")
+            return False
+        
+        self.logger.info(f"No valid TGT found, automatically generating one for {self.username}@{self.domain}")
+        
+        try:
+            self.generate_tgt()
+            return True
+        except Exception as e:
+            self.logger.debug(f"Failed to auto-generate TGT: {e}")
+            return False
+
     def kerberos_login(self, domain, username, password="", ntlm_hash="", aesKey="", kdcHost="", useCache=False):
         self.logger.debug(f"KDC set to: {kdcHost}")
-        # Re-connect since we logged off
-        self.create_conn_obj()
+        
+        # Set credentials for potential TGT generation
+        self.password = password
+        self.username = username
+        self.domain = domain
+        
+        # Handle NTLM hash
         lmhash = ""
         nthash = ""
+        if ntlm_hash.find(":") != -1:
+            lmhash, nthash = ntlm_hash.split(":")
+            self.hash = nthash
+        else:
+            nthash = ntlm_hash
+            self.hash = ntlm_hash
+        if lmhash:
+            self.lmhash = lmhash
+        if nthash:
+            self.nthash = nthash
+        
+        # If using kerberos and cache, ensure we have a valid TGT
+        if useCache and not self.ensure_tgt_available():
+            self.logger.fail("No valid TGT available and unable to generate one")
+            return False
+        
+        # Re-connect since we logged off
+        self.create_conn_obj()
 
         try:
-            self.password = password
-            self.username = username
-            # This checks to see if we didn't provide the LM Hash
-            if ntlm_hash.find(":") != -1:
-                lmhash, nthash = ntlm_hash.split(":")
-                self.hash = nthash
-            else:
-                nthash = ntlm_hash
-                self.hash = ntlm_hash
-            if lmhash:
-                self.lmhash = lmhash
-            if nthash:
-                self.nthash = nthash
-
             if not all(s == "" for s in [self.nthash, password, aesKey]):
                 kerb_pass = next(s for s in [self.nthash, password, aesKey] if s)
             else:
                 kerb_pass = ""
-                self.logger.debug(f"Attempting to do Kerberos Login with useCache: {useCache}")
+                self.logger.debug("Kerberos authentication: True")
 
             tgs = None
             if self.args.delegate:
@@ -621,7 +754,7 @@ class smb(connection):
 
             try:
                 tid = self.conn.connectTree("C$")
-                self.logger.debug("Successful C$ mount. User is possible admin")
+                self.logger.debug("Successfully mounted C$ share. User is likely admin")
 
                 fid = self.conn.createFile(
                     tid,
@@ -681,30 +814,45 @@ class smb(connection):
             ccache = CCache()
             ccache.fromTGT(tgt, oldSessionKey, sessionKey)
             
-            # Save to user-specified location
-            tgt_file = f"{self.args.generate_tgt}.ccache"
-            ccache.saveFile(tgt_file)
-            tgt_file_abs = os.path.abspath(tgt_file)
-            
-            # Also save to default Kerberos location for immediate use
+            # Always save to default Kerberos location for immediate use
             default_ccache = f"/tmp/krb5cc_{os.getuid()}"
-            try:
-                shutil.copy2(tgt_file_abs, default_ccache)
-                self.logger.debug(f"Copied ccache to default location: {default_ccache}")
-                ccache_injected = True
-            except Exception as e:
-                self.logger.debug(f"Failed to copy to default location: {e}")
-                ccache_injected = False
-
-            # Report results
-            self.logger.success(f"TGT saved to: {tgt_file_abs}")
-            if ccache_injected:
-                self.logger.success("TGT injected into current session. Use: nxc smb <target> -k --use-kcache")
-            else:
-                self.logger.success(f"To use this TGT, run: export KRB5CCNAME={tgt_file_abs}")
+            ccache.saveFile(default_ccache)
+            
+            # Set environment variable for immediate use in current session
+            os.environ["KRB5CCNAME"] = default_ccache
+            self.logger.debug(f"TGT injected into current session at: {default_ccache}")
+            
+            # Also save to user-specified location if --generate-tgt was used
+            if hasattr(self.args, "generate_tgt") and self.args.generate_tgt:
+                # Expand user path (handle ~)
+                user_path = os.path.expanduser(self.args.generate_tgt)
+                
+                # Check if the provided path is a directory or a file
+                if os.path.isdir(user_path):
+                    # If it's a directory, create a filename with the username
+                    tgt_file = os.path.join(user_path, f"{self.username}.ccache")
+                elif user_path.endswith(("/", "\\")):
+                    # If it ends with a slash, treat as directory and create if needed
+                    os.makedirs(user_path, exist_ok=True)
+                    tgt_file = os.path.join(user_path, f"{self.username}.ccache")
+                else:
+                    # If it's a file path, check if it has an extension
+                    tgt_file = user_path if "." in os.path.basename(user_path) else f"{user_path}_{self.username}.ccache"
+                
+                # Ensure directory exists
+                tgt_dir = os.path.dirname(tgt_file)
+                if tgt_dir:
+                    os.makedirs(tgt_dir, exist_ok=True)
+                
+                ccache.saveFile(tgt_file)
+                tgt_file_abs = os.path.abspath(tgt_file)
+                self.logger.success(f"TGT saved to: {tgt_file_abs}")
+            
+            self.logger.success("Ticket injected into current session for Kerberos authentication")
                 
         except Exception as e:
             self.logger.fail(f"Failed to get TGT: {e}")
+            raise
 
     def is_host_dc(self):
         from impacket.dcerpc.v5 import nrpc, epm
