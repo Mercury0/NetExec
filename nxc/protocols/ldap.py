@@ -10,6 +10,7 @@ from re import sub, IGNORECASE
 from zipfile import ZipFile
 from termcolor import colored
 from dns import resolver
+from dateutil.relativedelta import relativedelta as rd
 
 from Cryptodome.Hash import MD4
 from OpenSSL.SSL import SysCallError
@@ -44,6 +45,7 @@ from nxc.protocols.ldap.kerberos import KerberosAttacks
 from nxc.parsers.ldap_results import parse_result_attributes
 from nxc.helpers.ntlm_parser import parse_challenge
 from nxc.helpers.misc import get_bloodhound_info
+from nxc.paths import CONFIG_PATH, NXC_PATH
 
 ldap_error_status = {
     "1": "STATUS_NOT_SUPPORTED",
@@ -275,7 +277,7 @@ class ldap(connection):
                 self.logger.debug(f"LDAPSessionError while checking for channel binding requirements (likely NTLM disabled): {e!s}")
         except SysCallError as e:
             self.logger.debug(f"Received SysCallError when trying to enumerate channel binding support: {e!s}")
-            if e.args[1] == "ECONNRESET":
+            if e.args[1] in ["ECONNRESET", "WSAECONNRESET", "Unexpected EOF"]:
                 self.cbt_status = "No TLS cert"
             else:
                 raise
@@ -311,7 +313,10 @@ class ldap(connection):
             self.domain = self.targetDomain
 
         self.check_ldap_signing()
-        self.check_ldaps_cbt()
+        if getattr(self.args, "port_explicitly_set", False) and self.port == 389:
+            self.cbt_status = "Unknown"
+        else:
+            self.check_ldaps_cbt()
 
         # using kdcHost is buggy on impacket when using trust relation between ad so we kdcHost must stay to none if targetdomain is not equal to domain
         if not self.kdcHost and self.domain and self.domain == self.targetDomain:
@@ -319,7 +324,8 @@ class ldap(connection):
             self.kdcHost = result["host"] if result else None
             self.logger.info(f"Resolved domain: {self.domain} with dns, kdcHost: {self.kdcHost}")
 
-        self.output_filename = os.path.expanduser(f"~/.nxc/logs/{self.hostname}_{self.host}".replace(":", "-"))
+        filename = f"{self.hostname}_{self.host}".replace(":", "-")
+        self.output_filename = os.path.expanduser(os.path.join(NXC_PATH, "logs", filename))
 
         try:
             self.db.add_host(
@@ -343,7 +349,7 @@ class ldap(connection):
         self.logger.display(f"{self.server_os} (name:{self.hostname}) (domain:{self.domain}) ({signing}) ({cbt_status}) {ntlm}")
 
     def kerberos_login(self, domain, username, password="", ntlm_hash="", aesKey="", kdcHost="", useCache=False):
-        self.username = username if not self.username else self.username    # With ccache we get the username from the ticket
+        self.username = username if not self.args.use_kcache else self.username    # With ccache we get the username from the ticket
         self.password = password
         self.domain = domain
         self.kdcHost = kdcHost
@@ -409,7 +415,11 @@ class ldap(connection):
                 f"{domain}\\{self.username}{' account vulnerable to asreproast attack'} {''}",
                 color="yellow",
             )
-            return False
+            # If no preauth is set, we want to be able to execute commands such as --kerberoasting
+            if self.args.no_preauth_targets:  # noqa: SIM103
+                return True
+            else:
+                return False
         except SessionError as e:
             error, desc = e.getErrorString()
             used_ccache = " from ccache" if useCache else f":{process_secret(kerb_pass)}"
@@ -655,7 +665,7 @@ class ldap(connection):
         resp = self.search(search_filter, attributes, sizeLimit=0, baseDN=self.baseDN)
         resp_parsed = parse_result_attributes(resp)
         answers = []
-        if resp and ((self.password != "" or self.lmhash != "" or self.nthash != "" or self.aesKey != "") or self.ldap_connection) and self.username != "":
+        if resp and (self.password != "" or self.lmhash != "" or self.nthash != "" or self.aesKey != "" or self.use_kcache or self.ldap_connection) and self.username != "":
             for item in resp_parsed:
                 self.sid_domain = "-".join(item["objectSid"].split("-")[:-1])
 
@@ -684,7 +694,7 @@ class ldap(connection):
         t /= 10000000
         return t
 
-    def search(self, searchFilter, attributes, sizeLimit=0, baseDN=None) -> list:
+    def search(self, searchFilter, attributes, sizeLimit=0, baseDN=None, searchControls=None) -> list:
         if baseDN is None and self.args.base_dn is not None:
             baseDN = self.args.base_dn
         elif baseDN is None:
@@ -702,7 +712,7 @@ class ldap(connection):
                     searchFilter=searchFilter,
                     attributes=attributes,
                     sizeLimit=sizeLimit,
-                    searchControls=paged_search_control,
+                    searchControls=searchControls if searchControls else paged_search_control,
                 )
         except ldap_impacket.LDAPSearchError as e:
             if "sizeLimitExceeded" in str(e):
@@ -981,6 +991,46 @@ class ldap(connection):
                         hash_asreproast.write(f"{hash_TGT}\n")
 
     def kerberoasting(self):
+        if self.args.no_preauth_targets:
+            usernames = []
+            for item in self.args.no_preauth_targets:
+                if os.path.isfile(item):
+                    with open(item, encoding="utf-8") as f:
+                        usernames.extend(line.strip() for line in f if line.strip())
+                else:
+                    usernames.append(item.strip())
+
+            skipped = []
+            hashes = []
+
+            for spn in usernames:
+                base_name = spn.split("/", 1)[0].split("@", 1)[0].rstrip()
+
+                if base_name.lower() == "krbtgt" or base_name.endswith("$"):
+                    skipped.append(base_name)
+                    continue
+
+                if not self.username:
+                    self.logger.fail("Likely executed without password flag. Please run the command with -p ''")
+                    return
+                hashline = KerberosAttacks(self).get_tgs_no_preauth(self.username, spn)
+                if hashline:
+                    hashes.append(hashline)
+
+            if skipped:
+                self.logger.display(f"Skipping account: {', '.join(skipped)}")
+            if hashes:
+                self.logger.display(f"Total of records returned {len(hashes)}")
+            else:
+                self.logger.highlight("No entries found!")
+
+            for line in hashes:
+                self.logger.highlight(line)
+                if self.args.kerberoasting:
+                    with open(self.args.kerberoasting, "a+", encoding="utf-8") as f:
+                        f.write(line + "\n")
+            return
+
         # Building the search filter
         searchFilter = "(&(servicePrincipalName=*)(!(objectCategory=computer)))"
         attributes = [
@@ -1347,6 +1397,86 @@ class ldap(connection):
         else:
             self.logger.fail("No string provided :'(")
 
+    def pso(self):
+        """
+        Get the Fine Grained Password Policy/PSOs
+        Initial FGPP/PSO script written by @n00py: https://github.com/n00py/GetFGPP
+        """
+        # Convert LDAP time to human readable format
+        def pso_days(ldap_time):
+            return f"{rd(seconds=int(abs(int(ldap_time)) / 10000000)).days} days"
+        
+        def pso_mins(ldap_time):
+            return f"{rd(seconds=int(abs(int(ldap_time)) / 10000000)).minutes} minutes"
+        
+        # Are there even any FGPPs?
+        self.logger.info("Attempting to enumerate policies...")
+        resp = self.search(searchFilter="(objectclass=*)", baseDN=f"CN=Password Settings Container,CN=System,{self.baseDN}", attributes=[])
+        if len(resp) > 1:
+            self.logger.highlight(f"{len(resp) - 1} PSO Objects found!")
+            self.logger.highlight("")
+            self.logger.success("Attempting to enumerate objects with an applied policy...")
+
+        # Who do they apply to?
+        resp = self.search(searchFilter="(objectclass=*)", attributes=["DistinguishedName", "msDS-PSOApplied"])
+        resp_parsed = parse_result_attributes(resp)
+        for attrs in resp_parsed:
+            if "msDS-PSOApplied" in attrs:
+                # Get the distinguished name from the original response for objectName
+                for orig_resp in resp:
+                    if isinstance(orig_resp, ldapasn1_impacket.SearchResultEntry):
+                        self.logger.highlight(f"Object: {orig_resp['objectName']}")
+                        break
+                self.logger.highlight("Applied Policy: ")
+                pso_applied = attrs["msDS-PSOApplied"]
+                self.logger.highlight(f"\t{pso_applied}")
+                self.logger.highlight("")
+
+        # Let's find out even more details!
+        self.logger.info("Attempting to enumerate details...\n")
+        resp = self.search(searchFilter="(objectclass=msDS-PasswordSettings)",
+                          attributes=["name", "msds-lockoutthreshold", "msds-psoappliesto", "msds-minimumpasswordlength",
+                                     "msds-passwordhistorylength", "msds-lockoutobservationwindow", "msds-lockoutduration",
+                                     "msds-passwordsettingsprecedence", "msds-passwordcomplexityenabled", "Description",
+                                     "msds-passwordreversibleencryptionenabled", "msds-minimumpasswordage", "msds-maximumpasswordage"])
+        resp_parsed = parse_result_attributes(resp)
+        for attrs in resp_parsed:
+            policyName = attrs.get("name", "")
+            description = attrs.get("description", "")
+            passwordLength = attrs.get("msDS-MinimumPasswordLength", "")
+            passwordhistorylength = attrs.get("msDS-PasswordHistoryLength", "")
+            lockoutThreshold = attrs.get("msDS-LockoutThreshold", "")
+            observationWindow = attrs.get("msDS-LockoutObservationWindow", "")
+            lockoutDuration = attrs.get("msDS-LockoutDuration", "")
+            complexity = attrs.get("msDS-PasswordComplexityEnabled", "")
+            minPassAge = attrs.get("msDS-MinimumPasswordAge", "")
+            maxPassAge = attrs.get("msDS-MaximumPasswordAge", "")
+            reverseibleEncryption = attrs.get("msDS-PasswordReversibleEncryptionEnabled", "")
+            precedence = attrs.get("msDS-PasswordSettingsPrecedence", "")
+            policyApplies = attrs.get("msDS-PSOAppliesTo", "")
+
+            self.logger.highlight(f"Policy Name: {policyName}")
+            if description:
+                self.logger.highlight(f"Description: {description}")
+            self.logger.highlight(f"Minimum Password Length: {passwordLength}")
+            self.logger.highlight(f"Minimum Password History Length: {passwordhistorylength}")
+            self.logger.highlight(f"Lockout Threshold: {lockoutThreshold}")
+            self.logger.highlight(f"Observation Window: {pso_mins(observationWindow)}")
+            self.logger.highlight(f"Lockout Duration: {pso_mins(lockoutDuration)}")
+            self.logger.highlight(f"Complexity Enabled: {complexity}")
+            self.logger.highlight(f"Minimum Password Age: {pso_days(minPassAge)}")
+            self.logger.highlight(f"Maximum Password Age: {pso_days(maxPassAge)}")
+            self.logger.highlight(f"Reversible Encryption: {reverseibleEncryption}")
+            self.logger.highlight(f"Precedence: {precedence} (Lower is Higher Priority)")
+            self.logger.highlight("Policy Applies to:")
+            if isinstance(policyApplies, list):
+                for value in policyApplies:
+                    if value:
+                        self.logger.highlight(f"\t{value}")
+            elif policyApplies:
+                self.logger.highlight(f"\t{policyApplies}")
+            self.logger.highlight("")
+
     def bloodhound(self):
         # Check which version is desired
         use_bhce = self.config.getboolean("BloodHound-CE", "bhce_enabled", fallback=False)
@@ -1354,7 +1484,7 @@ class ldap(connection):
 
         if use_bhce and not is_ce:
             self.logger.fail("⚠️  Configuration Issue Detected ⚠️")
-            self.logger.fail("Your configuration has BloodHound-CE enabled, but the regular BloodHound package is installed. Modify your ~/.nxc/nxc.conf config file or follow the instructions:")
+            self.logger.fail(f"Your configuration has BloodHound-CE enabled, but the regular BloodHound package is installed. Modify your {CONFIG_PATH} config file or follow the instructions:")
             self.logger.fail("Please run the following commands to fix this:")
             self.logger.fail("poetry remove bloodhound-ce   # poetry falsely recognizes bloodhound-ce as a the old bloodhound package")
             self.logger.fail("poetry add bloodhound-ce")
