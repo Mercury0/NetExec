@@ -70,14 +70,14 @@ class NXCModule:
         Name: defender by @byinarie
         Description: Enables/Disables Windows Defender
         Supported Protocols: smb
-        
+
         Options:
           ACTION          Enable/Disable Windows Defender (choices: enable, disable)
-        
+
         Usage:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
-          
+
           nxc smb <target> -id 1 -M defender -o ACTION=enable
           nxc smb <target> -id 1 -M defender -o ACTION=disable
         """
@@ -107,10 +107,10 @@ class NXCModule:
         Name: {cls.name}
         Description: {cls.description}
         Supported Protocols: {', '.join(cls.supported_protocols)}
-        
+
         Options:
           ACTION          Enable/Disable Windows Defender (choices: enable, disable)
-        
+
         Usage:
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=enable
           nxc smb <target> -u <user> -p <password> -M defender -o ACTION=disable
