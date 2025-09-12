@@ -385,6 +385,12 @@ class smb(connection):
             out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_stealth()}"
             self.logger.success(out)
 
+            # Add Kerberos credential to database for shares and other functionality
+            self.db.add_credential("kerberos", domain, self.username, used_ccache)
+            user_id = self.db.get_credential("kerberos", domain, self.username, used_ccache)
+            host_id = self.db.get_hosts(self.host)[0].id
+            self.db.add_loggedin_relation(user_id, host_id)
+
             if not self.args.local_auth and self.username != "" and not self.args.delegate:
                 add_user_bh(self.username, domain, self.logger, self.config)
             if self.admin_privs:
@@ -1357,14 +1363,30 @@ class smb(connection):
         user_id = None
         try:
             self.logger.debug(f"domain: {self.domain}")
-            user_id = self.db.get_user(self.domain.upper(), self.username)[0][0]
+            # Try to get user_id from credentials table based on authentication method
+            if hasattr(self, "password") and self.password:
+                user_id = self.db.get_credential("plaintext", self.domain, self.username, self.password)
+            elif hasattr(self, "hash") and self.hash:
+                user_id = self.db.get_credential("hash", self.domain, self.username, self.hash)
+            elif self.kerberos:
+                # For Kerberos, try to find the credential by matching domain and username
+                creds = self.db.get_credentials()
+                for cred in creds:
+                    if (cred[4] == "kerberos" and
+                        cred[1].lower() == self.domain.lower() and
+                        cred[2].lower() == self.username.lower()):
+                        user_id = cred[0]
+                        break
+            else:
+                # Fallback to original method for other auth types
+                user_id = self.db.get_user(self.domain.upper(), self.username)[0][0]
         except IndexError as e:
             if self.kerberos or self.username == "":
-                pass
+                self.logger.debug(f"IndexError during user lookup (this is normal for Kerberos): {e!s}")
             else:
                 self.logger.fail(f"IndexError: {e!s}")
         except Exception as e:
-            self.logger.fail(f"Error getting user: {get_error_string(e)}")
+            self.logger.debug(f"Error getting user: {get_error_string(e)}")
 
         try:
             shares = self.conn.listShares()
@@ -1475,7 +1497,13 @@ class smb(connection):
 
             if user_id and share_name != "IPC$" and read:
                 try:
-                    self.db.add_share(self.hostname, user_id, share_name, share_remark, read, write)
+                    # Get the host ID from the database
+                    hosts = self.db.get_hosts(self.host)  # self.host is the IP address
+                    if hosts:
+                        host_id = hosts[0][0]  # First element is the ID
+                        self.db.add_share(host_id, user_id, share_name, share_remark, read, write)
+                    else:
+                        self.logger.debug(f"Could not find host {self.host} in database to save share {share_name}")
                 except Exception as e:
                     self.logger.debug(f"Error saving share info to DB: {get_error_string(e)}")
 
