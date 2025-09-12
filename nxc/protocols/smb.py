@@ -1488,11 +1488,21 @@ class smb(connection):
 
         for share in permissions:
             name = share["name"]
-            remark = share["remark"]
-            perms = ",".join(share["access"])
+            remark = share.get("remark", "") or ""
+            access = share.get("access", "")
+
+            # Normalize permissions
+            if isinstance(access, str):
+                perms = access
+            elif isinstance(access, (list, tuple, set)):
+                perms = "".join(access) if all(len(str(x)) == 1 for x in access) else ", ".join(access)
+            else:
+                perms = ""
+
             if self.args.shares and self.args.shares.lower() not in perms.lower():
                 continue
-            self.logger.highlight(f"{name:<15} {','.join(perms):<15} {remark}")
+            self.logger.highlight(f"{name:<15} {perms:<15} {remark}")
+
         return permissions
 
     def dir(self):
