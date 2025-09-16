@@ -216,18 +216,20 @@ class ldap(connection):
         return ""
 
     def check_ldap_signing(self):
-        self.signing_required = False
+        self.signing_required = "Unknown"
         ldap_url = f"ldap://{self.target}"
         try:
             ldap_connection = ldap_impacket.LDAPConnection(url=ldap_url, baseDN=self.baseDN, dstIp=self.host, signing=False)
             ldap_connection.login(domain=self.domain)
             self.logger.debug(f"LDAP signing is not enforced on {self.host}")
+            self.signing_required = "Not Required"  # Could be None or Negotiate
         except ldap_impacket.LDAPSessionError as e:
             if str(e).find("strongerAuthRequired") >= 0:
                 self.logger.debug(f"LDAP signing is enforced on {self.host}")
-                self.signing_required = True
+                self.signing_required = "Enforced"
             else:
-                self.logger.debug(f"LDAPSessionError while checking for signing requirements (likely NTLM disabled): {e!s}")
+                self.logger.debug(f"LDAPSessionError while checking for signing requirements: {e!s}")
+                self.signing_required = "Unknown"
 
     def check_ldaps_cbt(self):
         self.cbt_status = "Never"
@@ -341,7 +343,9 @@ class ldap(connection):
                 self.host,
                 self.hostname,
                 self.domain,
-                self.server_os
+                self.server_os,
+                self.signing_required,  # Add signing status
+                self.cbt_status        # Add channel binding status
             )
         except Exception as e:
             self.logger.debug(f"Error adding host {self.host} into db: {e!s}")

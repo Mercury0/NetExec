@@ -10,7 +10,9 @@ class navigator(DatabaseNavigator):
                 "IP",
                 "Hostname",
                 "Domain",
-                "OS"
+                "OS",
+                "Signing",
+                "Channel Binding"
             ]
         ]
 
@@ -25,13 +27,29 @@ class navigator(DatabaseNavigator):
             except Exception:
                 os = host[4]
 
+            # Get signing and channel binding fields (index 5 and 6)
+            try:
+                signing = host[5] if host[5] is not None else "Unknown"
+                # Convert legacy boolean values to proper strings
+                if signing == "1" or signing == 1 or signing:
+                    signing = "Enforced"
+                elif signing == "0" or signing == 0 or not signing:
+                    signing = "Not Required"
+
+                channel_binding = host[6] if host[6] is not None else "Unknown"
+            except IndexError:
+                signing = "Unknown"
+                channel_binding = "Unknown"
+
             data.append(
                 [
                     host_id,
                     ip,
                     hostname,
                     domain,
-                    os
+                    os,
+                    signing,
+                    channel_binding
                 ]
             )
         print_table(data, title="Hosts")
