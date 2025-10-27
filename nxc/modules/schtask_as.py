@@ -188,7 +188,6 @@ class NXCModule:
                 connection.args.share,
             )
 
-
             if self.show_output is False:
                 self.logger.display(f"Silently executing '{self.command_to_run}' as '{self.run_task_as}'")
             else:
