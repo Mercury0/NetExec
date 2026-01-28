@@ -26,7 +26,6 @@ def gen_cli_args():
         DISTANCE = ""
     CODENAME = "BLS"
 
-
     generic_parser = argparse.ArgumentParser(add_help=False, formatter_class=DisplayDefaultsNotNone)
     generic_group = generic_parser.add_argument_group("Generic Options")
     generic_group.add_argument("--version", action="store_true", help="Display nxc version")
